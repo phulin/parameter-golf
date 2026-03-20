@@ -620,39 +620,31 @@ def restore_low_dim_params_to_fp32(module: nn.Module) -> None:
 
 
 class Rotary(nn.Module):
-    # Caches cos/sin tables per sequence length on the current device.
-    def __init__(self, dim: int, base: float = 10000.0):
+    # Precomputes RoPE tables up to a fixed maximum length to stay torch.compile-friendly.
+    cos: Tensor
+    sin: Tensor
+
+    def __init__(self, dim: int, max_seq_len: int, base: float = 10000.0):
         super().__init__()
+        if max_seq_len <= 0:
+            raise ValueError(f"max_seq_len must be positive, got {max_seq_len}")
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self._seq_len_cached = 0
-        self._cos_cached: Tensor | None = None
-        self._sin_cached: Tensor | None = None
+        positions = torch.arange(max_seq_len, dtype=torch.float32)
+        freqs = torch.outer(positions, inv_freq)
+        self.max_seq_len = max_seq_len
+        self.register_buffer("cos", freqs.cos()[None, None, :, :], persistent=False)
+        self.register_buffer("sin", freqs.sin()[None, None, :, :], persistent=False)
 
     def forward(
         self, seq_len: int, device: torch.device, dtype: torch.dtype
     ) -> tuple[Tensor, Tensor]:
-        return self.for_positions(torch.arange(seq_len, device=device), device, dtype)
-
-    def for_positions(
-        self, positions: Tensor, device: torch.device, dtype: torch.dtype
-    ) -> tuple[Tensor, Tensor]:
-        max_pos = int(positions.max().item()) + 1 if positions.numel() > 0 else 0
-        if (
-            self._cos_cached is None
-            or self._sin_cached is None
-            or self._seq_len_cached < max_pos
-            or self._cos_cached.device != device
-        ):
-            inv_freq = cast(Tensor, self.inv_freq)
-            t = torch.arange(0, max_pos, device=device, dtype=inv_freq.dtype)
-            freqs = torch.outer(t, inv_freq.to(device))
-            self._cos_cached = freqs.cos()[None, None, :, :]
-            self._sin_cached = freqs.sin()[None, None, :, :]
-            self._seq_len_cached = max_pos
+        if seq_len > self.max_seq_len:
+            raise ValueError(
+                f"sequence length {seq_len} exceeds configured max_seq_len={self.max_seq_len}"
+            )
         return (
-            self._cos_cached[:, :, positions, :].to(dtype=dtype),
-            self._sin_cached[:, :, positions, :].to(dtype=dtype),
+            self.cos[:, :, :seq_len, :].to(device=device, dtype=dtype),
+            self.sin[:, :, :seq_len, :].to(device=device, dtype=dtype),
         )
 
 
@@ -668,6 +660,7 @@ class CausalSelfAttention(nn.Module):
         dim: int,
         num_heads: int,
         num_kv_heads: int,
+        max_seq_len: int,
         rope_base: float,
         qk_gain_init: float,
     ):
@@ -690,7 +683,7 @@ class CausalSelfAttention(nn.Module):
         self.q_gain = nn.Parameter(
             torch.full((num_heads,), qk_gain_init, dtype=torch.float32)
         )
-        self.rotary = Rotary(self.head_dim, base=rope_base)
+        self.rotary = Rotary(self.head_dim, max_seq_len=max_seq_len, base=rope_base)
 
     def forward(self, x: Tensor, q_delta=None, v_delta=None) -> Tensor:
         bsz, seqlen, dim = x.shape
@@ -719,6 +712,11 @@ class CausalSelfAttention(nn.Module):
 
 
 class DepthSelfAttention(nn.Module):
+    depth_cos: Tensor
+    depth_sin: Tensor
+    depth_rev_cos: Tensor
+    depth_rev_sin: Tensor
+
     def __init__(
         self,
         dim: int,
@@ -750,7 +748,26 @@ class DepthSelfAttention(nn.Module):
         self.q_gain = nn.Parameter(
             torch.full((num_heads,), qk_gain_init, dtype=torch.float32)
         )
-        self.rotary = Rotary(self.head_dim, base=rope_base)
+        inv_freq = 1.0 / (
+            rope_base
+            ** (torch.arange(0, self.head_dim, 2, dtype=torch.float32) / self.head_dim)
+        )
+        depth_positions = torch.arange(max_depth, dtype=torch.float32)
+        reverse_positions = torch.arange(max_depth - 1, -1, -1, dtype=torch.float32)
+        forward_freqs = torch.outer(depth_positions, inv_freq)
+        reverse_freqs = torch.outer(reverse_positions, inv_freq)
+        self.register_buffer(
+            "depth_cos", forward_freqs.cos()[None, None, :, :], persistent=False
+        )
+        self.register_buffer(
+            "depth_sin", forward_freqs.sin()[None, None, :, :], persistent=False
+        )
+        self.register_buffer(
+            "depth_rev_cos", reverse_freqs.cos()[None, None, :, :], persistent=False
+        )
+        self.register_buffer(
+            "depth_rev_sin", reverse_freqs.sin()[None, None, :, :], persistent=False
+        )
 
     def forward(self, x: Tensor, depth_history: list[Tensor]) -> Tensor:
         bsz, seqlen, dim = x.shape
@@ -769,21 +786,21 @@ class DepthSelfAttention(nn.Module):
         q = F.rms_norm(q, (q.size(-1),))
         k = F.rms_norm(k, (k.size(-1),))
 
-        depth_positions = torch.arange(depth, device=x.device)
-        reverse_positions = (self.max_depth - 1) - depth_positions
         half = self.head_dim // 2
         q1, q2 = q[..., :half], q[..., half:]
         k1, k2 = k[..., :half], k[..., half:]
-        query_positions = depth_positions[-1:]
-        reverse_query_positions = (self.max_depth - 1) - query_positions
-        q_cos, q_sin = self.rotary.for_positions(query_positions, x.device, q.dtype)
-        rq_cos, rq_sin = self.rotary.for_positions(
-            reverse_query_positions, x.device, q.dtype
+        q_cos = self.depth_cos[:, :, depth - 1 : depth, :].to(device=x.device, dtype=q.dtype)
+        q_sin = self.depth_sin[:, :, depth - 1 : depth, :].to(device=x.device, dtype=q.dtype)
+        rq_cos = self.depth_rev_cos[:, :, depth - 1 : depth, :].to(
+            device=x.device, dtype=q.dtype
         )
-        k_cos, k_sin = self.rotary.for_positions(depth_positions, x.device, k.dtype)
-        rk_cos, rk_sin = self.rotary.for_positions(
-            reverse_positions, x.device, k.dtype
+        rq_sin = self.depth_rev_sin[:, :, depth - 1 : depth, :].to(
+            device=x.device, dtype=q.dtype
         )
+        k_cos = self.depth_cos[:, :, :depth, :].to(device=x.device, dtype=k.dtype)
+        k_sin = self.depth_sin[:, :, :depth, :].to(device=x.device, dtype=k.dtype)
+        rk_cos = self.depth_rev_cos[:, :, :depth, :].to(device=x.device, dtype=k.dtype)
+        rk_sin = self.depth_rev_sin[:, :, :depth, :].to(device=x.device, dtype=k.dtype)
         q = torch.cat((q1 * q_cos + q2 * q_sin, q1 * (-rq_sin) + q2 * rq_cos), dim=-1)
         k = torch.cat((k1 * k_cos + k2 * k_sin, k1 * (-rk_sin) + k2 * rk_cos), dim=-1)
         q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
@@ -820,6 +837,7 @@ class Block(nn.Module):
         num_heads: int,
         num_kv_heads: int,
         mlp_mult: int,
+        max_seq_len: int,
         max_depth: int,
         rope_base: float,
         qk_gain_init: float,
@@ -829,7 +847,7 @@ class Block(nn.Module):
         self.depth_attn_norm = RMSNorm()
         self.mlp_norm = RMSNorm()
         self.attn = CausalSelfAttention(
-            dim, num_heads, num_kv_heads, rope_base, qk_gain_init
+            dim, num_heads, num_kv_heads, max_seq_len, rope_base, qk_gain_init
         )
         self.depth_attn = DepthSelfAttention(
             dim, num_heads, num_kv_heads, max_depth, rope_base, qk_gain_init
@@ -872,6 +890,7 @@ class RecursiveGPT(nn.Module):
         tie_embeddings: bool,
         tied_embed_init_std: float,
         logit_softcap: float,
+        max_seq_len: int,
         rope_base: float,
         qk_gain_init: float,
         num_recurrent_steps: int,
@@ -896,6 +915,7 @@ class RecursiveGPT(nn.Module):
                     num_heads,
                     num_kv_heads,
                     mlp_mult,
+                    max_seq_len,
                     num_recurrent_steps,
                     rope_base,
                     qk_gain_init,
@@ -1384,6 +1404,7 @@ def main() -> None:
             tie_embeddings=args.tie_embeddings,
             tied_embed_init_std=args.tied_embed_init_std,
             logit_softcap=args.logit_softcap,
+            max_seq_len=args.train_seq_len,
             rope_base=args.rope_base,
             qk_gain_init=args.qk_gain_init,
             num_recurrent_steps=args.num_recurrent_steps,
@@ -1394,9 +1415,6 @@ def main() -> None:
     for module in base_model.modules():
         if isinstance(module, CastedLinear):
             module.float()
-        if isinstance(module, Rotary):
-            inv_freq = cast(Tensor, module.inv_freq)
-            inv_freq.data = inv_freq.data.float()
     restore_low_dim_params_to_fp32(base_model)
     compiled_model = cast(
         nn.Module, torch.compile(base_model, dynamic=False, fullgraph=True)
