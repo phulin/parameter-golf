@@ -23,6 +23,7 @@ from typing import cast
 
 import numpy as np
 import sentencepiece as spm
+from tqdm import tqdm
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -932,9 +933,15 @@ def eval_val(
     total_loss_sum = 0.0
     total_tokens = 0.0
     total_bytes = 0.0
-    for batch_idx, batch_seq_start in enumerate(
-        range(0, total_seqs, val_batch_seqs), start=1
-    ):
+    batch_iter = range(0, total_seqs, val_batch_seqs)
+    progress_bar = tqdm(
+        batch_iter,
+        total=total_batches,
+        desc="val",
+        leave=False,
+        disable=log_fn is None,
+    )
+    for batch_seq_start in progress_bar:
         batch_seq_end = min(batch_seq_start + val_batch_seqs, total_seqs)
         raw_start = batch_seq_start * args.train_seq_len
         raw_end = batch_seq_end * args.train_seq_len + 1
@@ -955,12 +962,7 @@ def eval_val(
         ).astype(np.int16, copy=False)
         total_tokens += chunk_token_count
         total_bytes += float(bytes_np.astype(np.float64).sum())
-        if (
-            log_fn is not None
-            and total_batches > 1
-            and (batch_idx == 1 or batch_idx == total_batches or batch_idx % 25 == 0)
-        ):
-            log_fn(f"val_progress:{batch_idx}/{total_batches}")
+    progress_bar.close()
     val_loss = total_loss_sum / total_tokens
     bits_per_token = val_loss / math.log(2.0)
     val_bpb = bits_per_token * (total_tokens / total_bytes)
