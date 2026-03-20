@@ -29,7 +29,13 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from wandb_utils import finish_wandb, hyperparameters_to_config, init_wandb, log_wandb, update_summary
+from wandb_utils import (
+    finish_wandb,
+    hyperparameters_to_config,
+    init_wandb,
+    log_wandb,
+    update_summary,
+)
 
 # -----------------------------
 # HYPERPARAMETERS
@@ -61,6 +67,7 @@ class Hyperparameters:
     iterations = int(os.environ.get("ITERATIONS", 20000))
     warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 1200))
     warmup_steps = int(os.environ.get("WARMUP_STEPS", 20))
+    lr_warmup_steps = int(os.environ.get("LR_WARMUP_STEPS", 500))
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 524_288))
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
@@ -82,12 +89,12 @@ class Hyperparameters:
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
     num_recurrent_steps = int(os.environ.get("NUM_RECURRENT_STEPS", 3))
     # Optimizer hyperparameters.
-    embed_lr = float(os.environ.get("EMBED_LR", 0.6))
-    head_lr = float(os.environ.get("HEAD_LR", 0.008))
-    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.05))
+    embed_lr = float(os.environ.get("EMBED_LR", 0.004))
+    head_lr = float(os.environ.get("HEAD_LR", 0.004))
+    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.004))
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
     matrix_lr = float(os.environ.get("MATRIX_LR", 0.04))
-    scalar_lr = float(os.environ.get("SCALAR_LR", 0.04))
+    scalar_lr = float(os.environ.get("SCALAR_LR", 0.004))
     muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.95))
     muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))
     muon_momentum_warmup_start = float(
@@ -792,8 +799,12 @@ class DepthSelfAttention(nn.Module):
         half = self.head_dim // 2
         q1, q2 = q[..., :half], q[..., half:]
         k1, k2 = k[..., :half], k[..., half:]
-        q_cos = self.depth_cos[:, :, depth - 1 : depth, :].to(device=x.device, dtype=q.dtype)
-        q_sin = self.depth_sin[:, :, depth - 1 : depth, :].to(device=x.device, dtype=q.dtype)
+        q_cos = self.depth_cos[:, :, depth - 1 : depth, :].to(
+            device=x.device, dtype=q.dtype
+        )
+        q_sin = self.depth_sin[:, :, depth - 1 : depth, :].to(
+            device=x.device, dtype=q.dtype
+        )
         rq_cos = self.depth_rev_cos[:, :, depth - 1 : depth, :].to(
             device=x.device, dtype=q.dtype
         )
@@ -881,7 +892,9 @@ class ExpertAttention(nn.Module):
         self.num_active_experts = num_active_experts
         self.balance_lambda = balance_lambda
         self.router = CastedLinear(dim, dim, bias=False)
-        self.expert_keys = nn.Parameter(torch.empty(num_experts, dim, dtype=torch.float32))
+        self.expert_keys = nn.Parameter(
+            torch.empty(num_experts, dim, dtype=torch.float32)
+        )
         self.register_buffer("expert_bias", torch.zeros(num_experts))
         self.experts = nn.ModuleList(
             [ExpertMLP(dim, mlp_mult) for _ in range(num_experts)]
@@ -894,18 +907,10 @@ class ExpertAttention(nn.Module):
         reverse_positions = torch.arange(max_depth - 1, -1, -1, dtype=torch.float32)
         forward_freqs = torch.outer(depth_positions, inv_freq)
         reverse_freqs = torch.outer(reverse_positions, inv_freq)
-        self.register_buffer(
-            "depth_cos", forward_freqs.cos(), persistent=False
-        )
-        self.register_buffer(
-            "depth_sin", forward_freqs.sin(), persistent=False
-        )
-        self.register_buffer(
-            "depth_rev_cos", reverse_freqs.cos(), persistent=False
-        )
-        self.register_buffer(
-            "depth_rev_sin", reverse_freqs.sin(), persistent=False
-        )
+        self.register_buffer("depth_cos", forward_freqs.cos(), persistent=False)
+        self.register_buffer("depth_sin", forward_freqs.sin(), persistent=False)
+        self.register_buffer("depth_rev_cos", reverse_freqs.cos(), persistent=False)
+        self.register_buffer("depth_rev_sin", reverse_freqs.sin(), persistent=False)
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
@@ -943,19 +948,19 @@ class ExpertAttention(nn.Module):
         biased_logits = logits + self.expert_bias.to(dtype=logits.dtype)
         _, topk_idx = torch.topk(biased_logits, k=self.num_active_experts, dim=-1)
         topk_gates = gate_values.gather(-1, topk_idx)
-        topk_gates = (topk_gates / topk_gates.sum(dim=-1, keepdim=True).clamp_min(1e-9)).to(
-            dtype=gate_values.dtype
-        )
+        topk_gates = (
+            topk_gates / topk_gates.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+        ).to(dtype=gate_values.dtype)
         gates = torch.zeros_like(gate_values)
         gates.scatter_(-1, topk_idx, topk_gates)
         if self.training and self.balance_lambda > 0:
             expert_counts = gates.gt(0).float().sum(dim=0)
-            delta = self.balance_lambda * (expert_counts.median() - expert_counts).sign()
+            delta = (
+                self.balance_lambda * (expert_counts.median() - expert_counts).sign()
+            )
             self.expert_bias.add_(delta.to(dtype=self.expert_bias.dtype))
 
-        expert_outputs = torch.stack(
-            [expert(flat_x) for expert in self.experts], dim=1
-        )
+        expert_outputs = torch.stack([expert(flat_x) for expert in self.experts], dim=1)
         y = (expert_outputs * gates.to(dtype=expert_outputs.dtype).unsqueeze(-1)).sum(
             dim=1
         )
@@ -988,7 +993,12 @@ class Block(nn.Module):
             dim, num_heads, num_kv_heads, max_depth, rope_base, qk_gain_init
         )
         self.expert_attn = ExpertAttention(
-            dim, mlp_mult, num_experts, num_active_experts, max_depth, rope_base,
+            dim,
+            mlp_mult,
+            num_experts,
+            num_active_experts,
+            max_depth,
+            rope_base,
             balance_lambda=expert_balance_lambda,
         )
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
@@ -1005,11 +1015,7 @@ class Block(nn.Module):
         depth_in = self.depth_attn_norm(x)
         depth_attn_out = self.depth_attn(depth_in, depth_history)
         x = x + self.attn_scale.to(dtype=x.dtype)[None, None, :] * attn_out
-        x = (
-            x
-            + self.depth_attn_scale.to(dtype=x.dtype)[None, None, :]
-            * depth_attn_out
-        )
+        x = x + self.depth_attn_scale.to(dtype=x.dtype)[None, None, :] * depth_attn_out
         x = x + self.expert_scale.to(dtype=x.dtype)[None, None, :] * self.expert_attn(
             self.mlp_norm(x), len(depth_history)
         )
@@ -1659,7 +1665,9 @@ def main() -> None:
         f"max_wallclock_seconds:{args.max_wallclock_seconds:.3f}"
     )
     if args.num_layers != 1:
-        log0(f"note: NUM_LAYERS={args.num_layers} ignored; using one shared recurrent block")
+        log0(
+            f"note: NUM_LAYERS={args.num_layers} ignored; using one shared recurrent block"
+        )
     log0(f"num_recurrent_steps:{args.num_recurrent_steps}")
     log0(f"seed:{args.seed}")
     wandb_run = None
@@ -1712,23 +1720,15 @@ def main() -> None:
     )
 
     def lr_mul(step: int, elapsed_ms: float) -> float:
-        if args.warmdown_iters <= 0:
-            return 1.0
-        if max_wallclock_ms is None:
-            warmdown_start = max(args.iterations - args.warmdown_iters, 0)
-            return (
-                max((args.iterations - step) / max(args.warmdown_iters, 1), 0.0)
-                if warmdown_start <= step < args.iterations
-                else 1.0
-            )
-        step_ms = elapsed_ms / max(step, 1)
-        warmdown_ms = args.warmdown_iters * step_ms
-        remaining_ms = max(max_wallclock_ms - elapsed_ms, 0.0)
-        return (
-            remaining_ms / max(warmdown_ms, 1e-9)
-            if remaining_ms <= warmdown_ms
-            else 1.0
-        )
+        if step < args.lr_warmup_steps:
+            return step / max(args.lr_warmup_steps, 1)
+        if max_wallclock_ms is not None:
+            step_ms = elapsed_ms / max(step, 1)
+            warmup_ms = args.lr_warmup_steps * step_ms
+            t = min((elapsed_ms - warmup_ms) / max(max_wallclock_ms - warmup_ms, 1e-9), 1.0)
+            return 0.5 * (1.0 + math.cos(math.pi * t))
+        t = (step - args.lr_warmup_steps) / max(args.iterations - args.lr_warmup_steps, 1)
+        return 0.5 * (1.0 + math.cos(math.pi * t))
 
     # Warmup primes the compiled forward/backward/optimizer paths, then we restore the
     # initial weights/optimizer state so measured training starts from the true init.
