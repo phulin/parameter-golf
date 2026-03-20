@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import glob
+import importlib.metadata
 import io
 import math
 import os
@@ -27,6 +28,8 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
+
+from wandb_utils import finish_wandb, hyperparameters_to_config, init_wandb, log_wandb, update_summary
 
 # -----------------------------
 # HYPERPARAMETERS
@@ -1392,6 +1395,40 @@ def main() -> None:
         f"max_wallclock_seconds:{args.max_wallclock_seconds:.3f}"
     )
     log0(f"seed:{args.seed}")
+    wandb_run = None
+    if master_process:
+        wandb_run = init_wandb(
+            run_id=args.run_id,
+            backend="pytorch",
+            config=hyperparameters_to_config(args),
+            extra_config={
+                "python_version": sys.version,
+                "torch_version": torch.__version__,
+                "wandb_backend": "pytorch",
+                "distributed": distributed,
+                "world_size": world_size,
+                "grad_accum_steps": grad_accum_steps,
+                "dataset_name": dataset_dir.name,
+                "actual_train_files": actual_train_files,
+                "val_tokens": int(val_tokens.numel() - 1),
+                "tokenizer_path": args.tokenizer_path,
+                "train_files_glob": args.train_files,
+                "val_files_glob": args.val_files,
+                "n_params": int(n_params),
+                "pytorch_version": importlib.metadata.version("torch"),
+                "logfile": logfile,
+            },
+        )
+        update_summary(
+            wandb_run,
+            {
+                "dataset/name": dataset_dir.name,
+                "dataset/train_shards": actual_train_files,
+                "dataset/val_tokens": int(val_tokens.numel() - 1),
+                "model/n_params": int(n_params),
+                "runtime/logfile": logfile,
+            },
+        )
 
     # -----------------------------
     # DATA LOADER & MODEL WARMUP
@@ -1520,6 +1557,16 @@ def main() -> None:
                 f"step:{step}/{args.iterations} val_loss:{val_loss:.4f} val_bpb:{val_bpb:.4f} "
                 f"train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms"
             )
+            log_wandb(
+                wandb_run,
+                {
+                    "val/loss": val_loss,
+                    "val/bpb": val_bpb,
+                    "train/time_ms": training_time_ms,
+                    "train/step_avg_ms": training_time_ms / max(step, 1),
+                },
+                step=step,
+            )
             torch.cuda.synchronize()
             t0 = time.perf_counter()
 
@@ -1591,6 +1638,17 @@ def main() -> None:
                 f"step:{step}/{args.iterations} train_loss:{train_loss.item():.4f} "
                 f"train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / step:.2f}ms"
             )
+            log_wandb(
+                wandb_run,
+                {
+                    "train/loss": train_loss.item(),
+                    "train/time_ms": approx_training_time_ms,
+                    "train/step_avg_ms": approx_training_time_ms / step,
+                    "train/lr_scale": scale,
+                    "optimizer/muon_momentum": muon_momentum,
+                },
+                step=step,
+            )
 
         # Needed to sync whether we've reached the wallclock cap.
         reached_cap = (
@@ -1626,6 +1684,14 @@ def main() -> None:
         log0(f"Serialized model: {model_bytes} bytes")
         log0(f"Code size: {code_bytes} bytes")
         log0(f"Total submission size: {model_bytes + code_bytes} bytes")
+        update_summary(
+            wandb_run,
+            {
+                "artifact/raw_model_bytes": model_bytes,
+                "artifact/code_bytes": code_bytes,
+                "artifact/raw_total_bytes": model_bytes + code_bytes,
+            },
+        )
 
     quant_obj, quant_stats = quantize_state_dict_int8(base_model.state_dict())
     quant_buf = io.BytesIO()
@@ -1647,6 +1713,16 @@ def main() -> None:
             f"(payload:{quant_stats['int8_payload_bytes']} raw_torch:{quant_raw_bytes} payload_ratio:{ratio:.2f}x)"
         )
         log0(f"Total submission size int8+zlib: {quant_file_bytes + code_bytes} bytes")
+        update_summary(
+            wandb_run,
+            {
+                "artifact/int8_zlib_bytes": quant_file_bytes,
+                "artifact/int8_payload_bytes": quant_stats["int8_payload_bytes"],
+                "artifact/int8_raw_torch_bytes": quant_raw_bytes,
+                "artifact/int8_payload_ratio": ratio,
+                "artifact/int8_total_bytes": quant_file_bytes + code_bytes,
+            },
+        )
 
     if distributed:
         dist.barrier()
@@ -1679,6 +1755,13 @@ def main() -> None:
     log0(
         f"final_int8_zlib_roundtrip_exact val_loss:{q_val_loss:.8f} val_bpb:{q_val_bpb:.8f}"
     )
+    update_summary(
+        wandb_run,
+        {
+            "final/int8_roundtrip_val_loss": q_val_loss,
+            "final/int8_roundtrip_val_bpb": q_val_bpb,
+        },
+    )
 
     # LoRA test-time training evaluation (the competition score)
     torch._dynamo.reset()
@@ -1700,6 +1783,14 @@ def main() -> None:
         f"final_int8_ttt_lora val_loss:{ttt_val_loss:.4f} val_bpb:{ttt_val_bpb:.4f} "
         f"eval_time:{1000.0 * (time.perf_counter() - t_ttt):.0f}ms"
     )
+    update_summary(
+        wandb_run,
+        {
+            "final/ttt_lora_val_loss": ttt_val_loss,
+            "final/ttt_lora_val_bpb": ttt_val_bpb,
+        },
+    )
+    finish_wandb(wandb_run)
 
     if distributed:
         dist.destroy_process_group()

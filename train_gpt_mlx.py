@@ -30,6 +30,8 @@ import mlx.nn as nn
 import mlx.optimizers as optim
 from mlx.utils import tree_flatten, tree_unflatten
 
+from wandb_utils import finish_wandb, hyperparameters_to_config, init_wandb, log_wandb, update_summary
+
 # ==============================================================================
 # SHARD FORMAT + COMPUTE DTYPE
 # ==============================================================================
@@ -1129,6 +1131,36 @@ def main() -> None:
         f"linear_weight:{model.blocks[0].attn.c_q.weight.dtype} "
         f"skip_weights:{model.skip_weights.dtype}"
     )
+    wandb_run = init_wandb(
+        run_id=args.run_id,
+        backend="mlx",
+        config=hyperparameters_to_config(args),
+        extra_config={
+            "python_version": sys.version,
+            "mlx_version": mlx_version,
+            "wandb_backend": "mlx",
+            "dataset_name": dataset_name,
+            "actual_train_files": actual_train_files,
+            "expected_train_files": expected_train_files,
+            "val_tokens": int(val_tokens.size - 1),
+            "tokenizer_path": args.tokenizer_path,
+            "train_files_glob": args.train_files,
+            "val_files_glob": args.val_files,
+            "n_params": int(n_params),
+            "logfile": str(logfile),
+        },
+    )
+    update_summary(
+        wandb_run,
+        {
+            "dataset/name": dataset_name,
+            "dataset/train_shards": actual_train_files,
+            "dataset/expected_train_shards": expected_train_files,
+            "dataset/val_tokens": int(val_tokens.size - 1),
+            "model/n_params": int(n_params),
+            "runtime/logfile": str(logfile),
+        },
+    )
 
     # ==============================================================================
     # TRAINING LOOP
@@ -1209,6 +1241,16 @@ def main() -> None:
                     f"step:{step}/{args.iterations} val_loss:{val_loss:.4f} val_bpb:{val_bpb:.4f} "
                     f"train_time:{train_time_ms:.0f}ms step_avg:{train_time_ms / max(step, 1):.2f}ms"
                 )
+            log_wandb(
+                wandb_run,
+                {
+                    "val/loss": val_loss,
+                    "val/bpb": val_bpb,
+                    "train/time_ms": train_time_ms,
+                    "train/step_avg_ms": train_time_ms / max(step, 1),
+                },
+                step=step,
+            )
             t0 = time.perf_counter()
         if last_step:
             if stop_after_step is not None and step < args.iterations:
@@ -1254,6 +1296,17 @@ def main() -> None:
                 f"step:{step}/{args.iterations} train_loss:{train_loss_value:.4f} "
                 f"train_time:{approx_train_time_ms:.0f}ms step_avg:{approx_train_time_ms / step:.2f}ms tok_s:{tok_s:.0f}"
             )
+            log_wandb(
+                wandb_run,
+                {
+                    "train/loss": train_loss_value,
+                    "train/time_ms": approx_train_time_ms,
+                    "train/step_avg_ms": approx_train_time_ms / step,
+                    "train/tok_s": tok_s,
+                    "train/lr_scale": lr_mul,
+                },
+                step=step,
+            )
         if (
             max_wallclock_ms is not None
             and stop_after_step is None
@@ -1275,6 +1328,12 @@ def main() -> None:
     }
     mx.savez(str(out_path), **flat_state)
     log(f"saved_model:{out_path} bytes:{out_path.stat().st_size}")
+    update_summary(
+        wandb_run,
+        {
+            "artifact/raw_model_bytes": out_path.stat().st_size,
+        },
+    )
 
     quant_obj, quant_stats = quantize_state_dict_int8(flat_state)
     quant_raw = pickle.dumps(quant_obj, protocol=pickle.HIGHEST_PROTOCOL)
@@ -1290,6 +1349,15 @@ def main() -> None:
     log(
         f"serialized_model_int8_zlib:{quant_file_bytes} bytes "
         f"(payload:{quant_stats['int8_payload_bytes']} raw_pickle:{quant_serialized_bytes} payload_ratio:{ratio:.2f}x)"
+    )
+    update_summary(
+        wandb_run,
+        {
+            "artifact/int8_zlib_bytes": quant_file_bytes,
+            "artifact/int8_payload_bytes": quant_stats["int8_payload_bytes"],
+            "artifact/int8_raw_pickle_bytes": quant_serialized_bytes,
+            "artifact/int8_payload_ratio": ratio,
+        },
     )
 
     with quant_path.open("rb") as f:
@@ -1315,6 +1383,15 @@ def main() -> None:
     log(
         f"final_int8_zlib_roundtrip_exact val_loss:{q_val_loss:.8f} val_bpb:{q_val_bpb:.8f}"
     )
+    update_summary(
+        wandb_run,
+        {
+            "final/int8_roundtrip_val_loss": q_val_loss,
+            "final/int8_roundtrip_val_bpb": q_val_bpb,
+            "final/int8_roundtrip_eval_ms": q_eval_ms,
+        },
+    )
+    finish_wandb(wandb_run)
 
 
 if __name__ == "__main__":

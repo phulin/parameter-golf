@@ -62,8 +62,10 @@ cd parameter-golf
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install mlx numpy sentencepiece huggingface-hub datasets tqdm
+pip install mlx numpy sentencepiece huggingface-hub datasets tqdm wandb
 ```
+
+To stream the existing training logs to Weights & Biases, install `wandb`, set `WANDB_ENABLED=1`, and provide your API key in `WANDB_API_KEY`. Optional knobs are `WANDB_PROJECT`, `WANDB_ENTITY`, `WANDB_NAME`, `WANDB_GROUP`, and `WANDB_MODE=offline`.
 
 Download our cached version of FineWeb with the 1024-token vocabulary:
 
@@ -78,6 +80,7 @@ Then run a small MLX training job:
 
 ```bash
 RUN_ID=mlx_smoke \
+WANDB_ENABLED=1 \
 ITERATIONS=200 \
 TRAIN_BATCH_TOKENS=8192 \
 VAL_LOSS_EVERY=0 \
@@ -121,6 +124,7 @@ Launch your first training run. Note that we're passing `nproc_per_node=1` becau
 
 ```bash
 RUN_ID=baseline_sp1024 \
+WANDB_ENABLED=1 \
 DATA_PATH=./data/datasets/fineweb10B_sp1024/ \
 TOKENIZER_PATH=./data/tokenizers/fineweb_1024_bpe.model \
 VOCAB_SIZE=1024 \
