@@ -35,8 +35,8 @@ from wandb_utils import finish_wandb, hyperparameters_to_config, init_wandb, log
 # HYPERPARAMETERS
 # -----------------------------
 # Default Simple Baseline run:
-# - 9 transformer blocks at width 512
-# - 8 attention heads with 4 KV heads (GQA) and 2x MLP expansion
+# - 1 shared depth-recurrent transformer block at width 512
+# - 8 attention heads with 4 KV heads (GQA), depth attention, and 2x MLP expansion
 # - vocab size 1024, sequence length 1024, tied embeddings
 # - 524,288 train tokens per step for 20,000 iterations with a ~10 minute cap
 
@@ -68,7 +68,8 @@ class Hyperparameters:
 
     # Model shape.
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
-    num_layers = int(os.environ.get("NUM_LAYERS", 9))
+    # Retained for config compatibility; the model below always uses a single shared block.
+    num_layers = int(os.environ.get("NUM_LAYERS", 1))
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
@@ -76,6 +77,7 @@ class Hyperparameters:
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
+    num_recurrent_steps = int(os.environ.get("NUM_RECURRENT_STEPS", 3))
     # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
     head_lr = float(os.environ.get("HEAD_LR", 0.008))
@@ -331,7 +333,7 @@ CONTROL_TENSOR_NAME_PATTERNS = tuple(
     pattern
     for pattern in os.environ.get(
         "CONTROL_TENSOR_NAME_PATTERNS",
-        "attn_scale,attn_scales,mlp_scale,mlp_scales,resid_mix,resid_mixes,q_gain,skip_weight,skip_weights",
+        "attn_scale,attn_scales,depth_attn_scale,depth_attn_scales,mlp_scale,mlp_scales,q_gain,skip_weight,skip_weights",
     ).split(",")
     if pattern
 )
@@ -630,19 +632,28 @@ class Rotary(nn.Module):
     def forward(
         self, seq_len: int, device: torch.device, dtype: torch.dtype
     ) -> tuple[Tensor, Tensor]:
+        return self.for_positions(torch.arange(seq_len, device=device), device, dtype)
+
+    def for_positions(
+        self, positions: Tensor, device: torch.device, dtype: torch.dtype
+    ) -> tuple[Tensor, Tensor]:
+        max_pos = int(positions.max().item()) + 1 if positions.numel() > 0 else 0
         if (
             self._cos_cached is None
             or self._sin_cached is None
-            or self._seq_len_cached != seq_len
+            or self._seq_len_cached < max_pos
             or self._cos_cached.device != device
         ):
             inv_freq = cast(Tensor, self.inv_freq)
-            t = torch.arange(0, seq_len, device=device, dtype=inv_freq.dtype)
+            t = torch.arange(0, max_pos, device=device, dtype=inv_freq.dtype)
             freqs = torch.outer(t, inv_freq.to(device))
             self._cos_cached = freqs.cos()[None, None, :, :]
             self._sin_cached = freqs.sin()[None, None, :, :]
-            self._seq_len_cached = seq_len
-        return self._cos_cached.to(dtype=dtype), self._sin_cached.to(dtype=dtype)
+            self._seq_len_cached = max_pos
+        return (
+            self._cos_cached[:, :, positions, :].to(dtype=dtype),
+            self._sin_cached[:, :, positions, :].to(dtype=dtype),
+        )
 
 
 def apply_rotary_emb(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
@@ -707,6 +718,87 @@ class CausalSelfAttention(nn.Module):
         return self.proj(y)
 
 
+class DepthSelfAttention(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        num_kv_heads: int,
+        max_depth: int,
+        rope_base: float,
+        qk_gain_init: float,
+    ):
+        super().__init__()
+        if dim % num_heads != 0:
+            raise ValueError("model_dim must be divisible by num_heads")
+        if num_heads % num_kv_heads != 0:
+            raise ValueError("num_heads must be divisible by num_kv_heads")
+        if max_depth <= 0:
+            raise ValueError(f"max_depth must be positive, got {max_depth}")
+        self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads
+        self.head_dim = dim // num_heads
+        if self.head_dim % 2 != 0:
+            raise ValueError("head_dim must be even for RoPE")
+        self.max_depth = max_depth
+        kv_dim = self.num_kv_heads * self.head_dim
+        self.c_q = CastedLinear(dim, dim, bias=False)
+        self.c_k = CastedLinear(dim, kv_dim, bias=False)
+        self.c_v = CastedLinear(dim, kv_dim, bias=False)
+        self.proj = CastedLinear(dim, dim, bias=False)
+        self.proj._zero_init = True
+        self.q_gain = nn.Parameter(
+            torch.full((num_heads,), qk_gain_init, dtype=torch.float32)
+        )
+        self.rotary = Rotary(self.head_dim, base=rope_base)
+
+    def forward(self, x: Tensor, depth_history: list[Tensor]) -> Tensor:
+        bsz, seqlen, dim = x.shape
+        kv_source = torch.stack([*depth_history, x], dim=2)
+        depth = kv_source.size(2)
+        q = self.c_q(x).reshape(bsz * seqlen, 1, self.num_heads, self.head_dim)
+        k = self.c_k(kv_source).reshape(
+            bsz * seqlen, depth, self.num_kv_heads, self.head_dim
+        )
+        v = self.c_v(kv_source).reshape(
+            bsz * seqlen, depth, self.num_kv_heads, self.head_dim
+        )
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        q = F.rms_norm(q, (q.size(-1),))
+        k = F.rms_norm(k, (k.size(-1),))
+
+        depth_positions = torch.arange(depth, device=x.device)
+        reverse_positions = (self.max_depth - 1) - depth_positions
+        half = self.head_dim // 2
+        q1, q2 = q[..., :half], q[..., half:]
+        k1, k2 = k[..., :half], k[..., half:]
+        query_positions = depth_positions[-1:]
+        reverse_query_positions = (self.max_depth - 1) - query_positions
+        q_cos, q_sin = self.rotary.for_positions(query_positions, x.device, q.dtype)
+        rq_cos, rq_sin = self.rotary.for_positions(
+            reverse_query_positions, x.device, q.dtype
+        )
+        k_cos, k_sin = self.rotary.for_positions(depth_positions, x.device, k.dtype)
+        rk_cos, rk_sin = self.rotary.for_positions(
+            reverse_positions, x.device, k.dtype
+        )
+        q = torch.cat((q1 * q_cos + q2 * q_sin, q1 * (-rq_sin) + q2 * rq_cos), dim=-1)
+        k = torch.cat((k1 * k_cos + k2 * k_sin, k1 * (-rk_sin) + k2 * rk_cos), dim=-1)
+        q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
+        y = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=None,
+            is_causal=False,
+            enable_gqa=(self.num_kv_heads != self.num_heads),
+        )
+        y = y.transpose(1, 2).contiguous().reshape(bsz, seqlen, dim)
+        return self.proj(y)
+
+
 class MLP(nn.Module):
     # relu^2 MLP from the original modded-nanogpt setup
     def __init__(self, dim: int, mlp_mult: int):
@@ -728,36 +820,44 @@ class Block(nn.Module):
         num_heads: int,
         num_kv_heads: int,
         mlp_mult: int,
+        max_depth: int,
         rope_base: float,
         qk_gain_init: float,
     ):
         super().__init__()
         self.attn_norm = RMSNorm()
+        self.depth_attn_norm = RMSNorm()
         self.mlp_norm = RMSNorm()
         self.attn = CausalSelfAttention(
             dim, num_heads, num_kv_heads, rope_base, qk_gain_init
         )
+        self.depth_attn = DepthSelfAttention(
+            dim, num_heads, num_kv_heads, max_depth, rope_base, qk_gain_init
+        )
         self.mlp = MLP(dim, mlp_mult)
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
+        self.depth_attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
-        self.resid_mix = nn.Parameter(
-            torch.stack((torch.ones(dim), torch.zeros(dim))).float()
-        )
 
     def forward(
-        self, x: Tensor, x0: Tensor, q_delta_fn=None, v_delta_fn=None
-    ) -> Tensor:
-        mix = self.resid_mix.to(dtype=x.dtype)
-        x = mix[0][None, None, :] * x + mix[1][None, None, :] * x0
-        n = self.attn_norm(x)
-        qd = q_delta_fn(n) if q_delta_fn is not None else None
-        vd = v_delta_fn(n) if v_delta_fn is not None else None
-        attn_out = self.attn(n, qd, vd)
+        self, x: Tensor, depth_history: list[Tensor], q_delta_fn=None, v_delta_fn=None
+    ) -> tuple[Tensor, list[Tensor]]:
+        seq_in = self.attn_norm(x)
+        qd = q_delta_fn(seq_in) if q_delta_fn is not None else None
+        vd = v_delta_fn(seq_in) if v_delta_fn is not None else None
+        attn_out = self.attn(seq_in, qd, vd)
+        depth_in = self.depth_attn_norm(x)
+        depth_attn_out = self.depth_attn(depth_in, depth_history)
         x = x + self.attn_scale.to(dtype=x.dtype)[None, None, :] * attn_out
+        x = (
+            x
+            + self.depth_attn_scale.to(dtype=x.dtype)[None, None, :]
+            * depth_attn_out
+        )
         x = x + self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(
             self.mlp_norm(x)
         )
-        return x
+        return F.rms_norm(x, (x.size(-1),)), [*depth_history, depth_in]
 
 
 class RecursiveGPT(nn.Module):
@@ -774,21 +874,21 @@ class RecursiveGPT(nn.Module):
         logit_softcap: float,
         rope_base: float,
         qk_gain_init: float,
+        num_recurrent_steps: int,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
             raise ValueError(f"logit_softcap must be positive, got {logit_softcap}")
+        if num_recurrent_steps <= 0:
+            raise ValueError(
+                f"num_recurrent_steps must be positive, got {num_recurrent_steps}"
+            )
         self.tie_embeddings = tie_embeddings
         self.tied_embed_init_std = tied_embed_init_std
         self.logit_softcap = logit_softcap
-        self.num_recurrent_steps = 3
+        self.num_recurrent_steps = num_recurrent_steps
         self.tok_emb = nn.Embedding(vocab_size, model_dim)
-        self.num_encoder_layers = num_layers // 2
-        self.num_decoder_layers = num_layers - self.num_encoder_layers
-        self.num_skip_weights = min(self.num_encoder_layers, self.num_decoder_layers)
-        self.skip_weights = nn.Parameter(
-            torch.ones(self.num_skip_weights, model_dim, dtype=torch.float32)
-        )
+        self.num_layers = 1
         self.blocks = nn.ModuleList(
             [
                 Block(
@@ -796,10 +896,10 @@ class RecursiveGPT(nn.Module):
                     num_heads,
                     num_kv_heads,
                     mlp_mult,
+                    num_recurrent_steps,
                     rope_base,
                     qk_gain_init,
                 )
-                for i in range(num_layers)
             ]
         )
         self.final_norm = RMSNorm()
@@ -817,29 +917,6 @@ class RecursiveGPT(nn.Module):
             if isinstance(module, nn.Linear) and getattr(module, "_zero_init", False):
                 nn.init.zeros_(module.weight)
 
-    def encoder_decoder(self, x: Tensor, lora=None) -> Tensor:
-        x0 = x
-        skips: list[Tensor] = []
-        # First half stores skips; second half reuses them in reverse order.
-        for i in range(self.num_encoder_layers):
-            qd = lora.q_loras[i] if lora else None
-            vd = lora.v_loras[i] if lora else None
-            x = self.blocks[i](x, x0, qd, vd)
-            skips.append(x)
-        for i in range(self.num_decoder_layers):
-            bi = self.num_encoder_layers + i
-            if skips:
-                x = (
-                    x
-                    + self.skip_weights[i].to(dtype=x.dtype)[None, None, :]
-                    * skips.pop()
-                )
-            qd = lora.q_loras[bi] if lora else None
-            vd = lora.v_loras[bi] if lora else None
-            x = self.blocks[bi](x, x0, qd, vd)
-
-        return x
-
     def _compute_logits(self, y: Tensor, lora=None) -> Tensor:
         y = self.final_norm(y)
         if self.tie_embeddings:
@@ -855,14 +932,17 @@ class RecursiveGPT(nn.Module):
     ) -> tuple[list[Tensor], Tensor]:
         x = self.tok_emb(input_ids)
         x = F.rms_norm(x, (x.size(-1),))
-        if y is None:
-            y = torch.zeros_like(x)
+        if y is not None:
+            x = F.rms_norm(x + y.to(dtype=x.dtype), (x.size(-1),))
 
+        depth_history: list[Tensor] = []
         step_logits: list[Tensor] = []
         for _ in range(self.num_recurrent_steps):
-            y = self.encoder_decoder(x + y, lora)
-            step_logits.append(self._compute_logits(y, lora))
-        return step_logits, y
+            qd = lora.q_loras[0] if lora else None
+            vd = lora.v_loras[0] if lora else None
+            x, depth_history = self.blocks[0](x, depth_history, qd, vd)
+            step_logits.append(self._compute_logits(x, lora))
+        return step_logits, x
 
     def forward(
         self,
@@ -889,6 +969,20 @@ def loss_fn(logits, target_ids, lora=None):
         target_ids.reshape(-1),
         reduction="mean",
     )
+
+
+def weighted_step_loss(step_logits: list[Tensor], target_ids: Tensor) -> Tensor:
+    weights = torch.arange(
+        1,
+        len(step_logits) + 1,
+        device=step_logits[0].device,
+        dtype=torch.float32,
+    )
+    weights = weights / weights.sum()
+    losses = torch.stack(
+        [loss_fn(logits, target_ids).to(torch.float32) for logits in step_logits]
+    )
+    return (losses * weights).sum().to(dtype=step_logits[0].dtype)
 
 
 # -----------------------------
@@ -1292,6 +1386,7 @@ def main() -> None:
             logit_softcap=args.logit_softcap,
             rope_base=args.rope_base,
             qk_gain_init=args.qk_gain_init,
+            num_recurrent_steps=args.num_recurrent_steps,
         )
         .to(device)
         .bfloat16()
@@ -1334,8 +1429,6 @@ def main() -> None:
         if p.ndim < 2
         or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
     ]
-    if base_model.skip_weights.numel() > 0:
-        scalar_params.append(base_model.skip_weights)
     token_lr = args.tied_embed_lr if args.tie_embeddings else args.embed_lr
     optimizer_tok = torch.optim.Adam(
         [{"params": [base_model.tok_emb.weight], "lr": token_lr, "base_lr": token_lr}],
@@ -1394,6 +1487,9 @@ def main() -> None:
         f"iterations:{args.iterations} warmup_steps:{args.warmup_steps} "
         f"max_wallclock_seconds:{args.max_wallclock_seconds:.3f}"
     )
+    if args.num_layers != 1:
+        log0(f"note: NUM_LAYERS={args.num_layers} ignored; using one shared recurrent block")
+    log0(f"num_recurrent_steps:{args.num_recurrent_steps}")
     log0(f"seed:{args.seed}")
     wandb_run = None
     if master_process:
@@ -1489,9 +1585,7 @@ def main() -> None:
                     device_type="cuda", dtype=torch.bfloat16, enabled=True
                 ):
                     warmup_step_logits, _ = train_model.recurrent_steps(x)
-                    warmup_loss = sum(
-                        loss_fn(step_logits, y) for step_logits in warmup_step_logits
-                    ) / len(warmup_step_logits)
+                    warmup_loss = weighted_step_loss(warmup_step_logits, y)
                 (warmup_loss * grad_scale).backward()
             for opt in optimizers:
                 opt.step()
@@ -1598,9 +1692,7 @@ def main() -> None:
             x, y_true = batch_xy[micro_step]
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
                 step_logits, _ = train_model.recurrent_steps(x)
-                loss = sum(loss_fn(logits, y_true) for logits in step_logits) / len(
-                    step_logits
-                )
+                loss = weighted_step_loss(step_logits, y_true)
             train_loss += loss.detach()
             (loss * grad_scale).backward()
         train_loss /= grad_accum_steps
