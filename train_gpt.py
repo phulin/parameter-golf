@@ -295,7 +295,8 @@ def eval_val(
             x = local[:-1].reshape(-1, args.train_seq_len)
             y = local[1:].reshape(-1, args.train_seq_len)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
-                batch_loss = model(x, y).detach()
+                batch_logits = model(x)
+                batch_loss = loss_fn(batch_logits, y).detach()
             batch_token_count = float(y.numel())
             val_loss_sum += batch_loss.to(torch.float64) * batch_token_count
             val_token_count += batch_token_count
@@ -856,23 +857,31 @@ class RecursiveGPT(nn.Module):
         y, z = self.latent_recursion(x, y, z, lora)
         return y, z
 
-    def forward(self, input_ids: Tensor, y: Tensor, z: Tensor, lora=None) -> Tensor:
+    def forward(
+        self,
+        input_ids: Tensor,
+        y: Tensor | None = None,
+        z: Tensor | None = None,
+        lora=None,
+        return_state: bool = False,
+    ) -> Tensor | tuple[Tensor, Tensor, Tensor]:
         x = self.tok_emb(input_ids)
         x = F.rms_norm(x, (x.size(-1),))
-
-        # TODO: make
-        y = torch.zeros_like(x)
-        z = torch.zeros_like(x)
+        if y is None:
+            y = torch.zeros_like(x)
+        if z is None:
+            z = torch.zeros_like(x)
         y, z = self.deep_recursion(x, y, z, lora)
-
-        x = self.final_norm(x)
+        y = self.final_norm(y)
         if self.tie_embeddings:
-            logits = F.linear(x, self.tok_emb.weight)
+            logits = F.linear(y, self.tok_emb.weight)
         else:
             assert self.lm_head is not None
-            logits = self.lm_head(x)
-        logits = logits + (lora.lm_head_lora(x) if lora else 0)
+            logits = self.lm_head(y)
+        logits = logits + (lora.lm_head_lora(y) if lora else 0)
         logits = self.logit_softcap * torch.tanh(logits / self.logit_softcap)
+        if return_state:
+            return logits, y.detach(), z.detach()
         return logits
 
 
@@ -1110,13 +1119,13 @@ def eval_val_ttt_lora(
             # Forward pass (keep grad graph alive only when we need to train)
             if needs_train:
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    ptl = base_model(x, y, lora=cur_lora)
+                    ptl = loss_fn(base_model(x, lora=cur_lora), y, lora=cur_lora)
             else:
                 with (
                     torch.no_grad(),
                     torch.autocast(device_type="cuda", dtype=torch.bfloat16),
                 ):
-                    ptl = base_model(x, y, lora=cur_lora)
+                    ptl = loss_fn(base_model(x, lora=cur_lora), y, lora=cur_lora)
 
             # Score: accumulate loss and byte counts for BPB (before training on chunk)
             with torch.no_grad():
@@ -1526,6 +1535,13 @@ def main() -> None:
         scale = lr_mul(step, elapsed_ms)
         zero_grad_all()
 
+        batch_xy = [
+            train_loader.next_batch(
+                args.train_batch_tokens, args.train_seq_len, grad_accum_steps
+            )
+            for _ in range(grad_accum_steps)
+        ]
+        batch_states: list[tuple[Tensor, Tensor] | None] = [None] * grad_accum_steps
         for _ in range(args.N_sup):
             train_loss = torch.zeros((), device=device)
             for micro_step in range(grad_accum_steps):
@@ -1534,14 +1550,19 @@ def main() -> None:
                     ddp_model.require_backward_grad_sync = (
                         micro_step == grad_accum_steps - 1
                     )
-                x, y_true = train_loader.next_batch(
-                    args.train_batch_tokens, args.train_seq_len, grad_accum_steps
-                )
+                x, y_true = batch_xy[micro_step]
+                yz_state = batch_states[micro_step]
                 with torch.autocast(
                     device_type="cuda", dtype=torch.bfloat16, enabled=True
                 ):
-                    logits = model(x, y)
+                    if yz_state is None:
+                        logits, y_state, z_state = model(x, return_state=True)
+                    else:
+                        logits, y_state, z_state = model(
+                            x, yz_state[0], yz_state[1], return_state=True
+                        )
                     loss = loss_fn(logits, y_true)
+                batch_states[micro_step] = (y_state, z_state)
                 train_loss += loss.detach()
                 (loss * grad_scale).backward()
             train_loss /= grad_accum_steps
