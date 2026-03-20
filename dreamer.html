@@ -1,0 +1,1495 @@
+logo Back to arXiv <https://arxiv.org/>
+<https://arxiv.org/abs/2601.21582>
+
+<javascript:toggleColorScheme()>
+
+logo Back to arXiv <https://arxiv.org/>
+
+This is *experimental HTML* to improve accessibility. We invite you to
+report rendering errors. Use Alt+Y to toggle on accessible reporting
+links and Alt+Shift+Y to toggle off. Learn more about this project
+<https://info.arxiv.org/about/accessible_HTML.html> and help improve
+conversions <https://info.arxiv.org/help/submit_latex_best_practices.html>.
+
+Why HTML? <https://info.arxiv.org/about/accessible_HTML.html> Report
+Issue <#myForm> Back to Abstract <https://arxiv.org/abs/2601.21582v1>
+Download PDF <https://arxiv.org/pdf/2601.21582v1>
+
+<javascript:toggleColorScheme()>
+
+
+Table of Contents
+
+ 1. Abstract <https://arxiv.org/html/2601.21582#abstract>
+ 2. 1 Introduction <https://arxiv.org/html/2601.21582v1#S1>
+ 3. 2 Related Work <https://arxiv.org/html/2601.21582v1#S2>
+ 4. 3 Methods <https://arxiv.org/html/2601.21582v1#S3>
+     1. 3.1 Overview: Depth-Recurrent Attention Mixture <https://
+        arxiv.org/html/2601.21582v1#S3.SS1>
+     2. 3.2 Background: Attention <https://arxiv.org/
+        html/2601.21582v1#S3.SS2>
+     3. 3.3 Sequence Attention (SA) <https://arxiv.org/
+        html/2601.21582v1#S3.SS3>
+     4. 3.4 Depth Attention (DA) <https://arxiv.org/
+        html/2601.21582v1#S3.SS4>
+     5. 3.5 Expert Attention (EA) <https://arxiv.org/
+        html/2601.21582v1#S3.SS5>
+     6. 3.6 Attention Mixture <https://arxiv.org/html/2601.21582v1#S3.SS6>
+     7. 3.7 Depth Recurrence (DR) <https://arxiv.org/
+        html/2601.21582v1#S3.SS7>
+     8. 3.8 FLOP- and Parameter-Matching <https://arxiv.org/
+        html/2601.21582v1#S3.SS8>
+ 5. 4 Experiments <https://arxiv.org/html/2601.21582v1#S4>
+     1. 4.1 Reasoning and Language Modeling <https://arxiv.org/
+        html/2601.21582v1#S4.SS1>
+     2. 4.2 Analyzing Depth Attention and Expert Attention <https://
+        arxiv.org/html/2601.21582v1#S4.SS2>
+ 6. 5 Discussion and Future Work <https://arxiv.org/html/2601.21582v1#S5>
+ 7. 6 Conclusion <https://arxiv.org/html/2601.21582v1#S6>
+ 8. 7 Acknowledgments <https://arxiv.org/html/2601.21582v1#S7>
+ 9. 8 Broader Impact Statement <https://arxiv.org/html/2601.21582v1#S8>
+10. A Experiment Details <https://arxiv.org/html/2601.21582v1#A1>
+11. B Further Analysis <https://arxiv.org/html/2601.21582v1#A2>
+12. References <https://arxiv.org/html/2601.21582#bib>
+
+License: CC BY 4.0 <https://info.arxiv.org/help/license/
+index.html#licenses-available>
+arXiv:2601.21582v1 [cs.AI] 29 Jan 2026
+
+
+  Depth-Recurrent Attention Mixtures: Giving Latent Reasoning the
+  Attention it Deserves
+
+Report issue for preceding element
+Jonas Knupp   Jan Hendrik Metzen   Jeremias Bohn   Georg Groh   Kristian
+Kersting
+Report issue for preceding element
+
+
+            Abstract
+
+Report issue for preceding element
+
+Depth-recurrence facilitates latent reasoning by sharing parameters
+across depths. However, prior work lacks combined FLOP-, parameter-, and
+memory-matched baselines, underutilizes depth-recurrence due to
+partially fixed layer stacks, and ignores the bottleneck of constant
+hidden-sizes that restricts many-step latent reasoning. To address this,
+we introduce a modular framework of depth-recurrent attention mixtures
+(Dreamer), combining sequence attention, depth attention, and sparse
+expert attention. It alleviates the hidden-size bottleneck through
+attention along depth, decouples scaling dimensions, and allows depth-
+recurrent models to scale efficiently and effectively. Across language
+reasoning benchmarks, our models require 2 to 8×\times fewer training
+tokens for the same accuracy as FLOP-, parameter-, and memory-matched
+SOTA, and outperform ca. 2×\times larger SOTA models with the same
+training tokens. We further present insights into knowledge usage across
+depths, e.g., showing 2 to 11×\times larger expert selection diversity
+than SOTA MoEs.
+
+Report issue for preceding element
+depth recurrence, latent reasoning, hidden-size bottleneck, attention,
+depth attention, expert attention, mixture of experts, attention
+mixture, dreamer
+
+
+    1 Introduction
+
+Report issue for preceding element
+
+Reasoning language models are becoming the backbone of modern AI for
+various applications. They allow tackling complex problems by scaling
+test-time compute via chain-of-thought (CoT). But traditional CoT
+enforces verbalization in discrete natural language, which limits
+expressivity and results in long sequences that are computationally
+expensive to generate and train.
+
+Report issue for preceding element
+
+A potential solution is latent reasoning via depth recurrence (DR). By
+reusing parameters across depths, DR allows scaling the depth while
+keeping the model and its parameter count unchanged. This allows open-
+ended many-step reasoning in latent space along the depth dimension,
+offering an alternative to traditional CoT. “Latent CoT” in continuous
+space can increase reasoning efficiency, leveraging expressivity beyond
+natural language (Zhuet al., 2025a <https://arxiv.org/
+html/2601.21582v1#bib.bib1>; Haoet al., 2024 <https://arxiv.org/
+html/2601.21582v1#bib.bib2>). Additionally, knowledge reuse across
+depths may improve parameter efficiency and compositional
+generalization, a crucial property for out-of-distribution performance.
+
+Report issue for preceding element
+
+However, there are two major bottlenecks for scaling DR: Layer-size
+bottleneck: Scaling a dense DR model is intractable, since the whole DR
+model is executed at each depth. To solve this, we decouple compute from
+parameters by using a sparse mixture of experts (MoE), with adjustements
+like low-rank and depth-position-encoded routing, to improve behavior in
+depth-recurrent settings.
+Hidden-size bottleneck: Pushing more reasoning from the sequence into
+the depth dimension exacerbates the hidden-size bottleneck, which limits
+complex latent reasoning due to a constant hidden-state size. Attention
+already solves the same issue observed in recurrent neural networks
+(RNNs) along the sequence dimension, leading to sequence attention (SA).
+We suggest to leverage the same principle along the depth dimension,
+thus leading to depth attention (DA).
+
+Report issue for preceding element
+
+Refer to caption
+
+Report issue for preceding element
+Figure 1: High-level illustration of our modular depth-recurrent
+attention mixture (Dreamer). This instance combines sequence attention
+(SA), depth attention (DA), and expert attention (EA) in a single depth-
+recurrent (DR) layer. It facilitates knowledge reuse, compositional
+generalization, and alleviates the hidden-size bottleneck, leading to
+better reasoning, data efficiency, and scaling behavior. The decoupled
+scaling dimensions (#params, #FLOPs, depth, and latent memory size) are
+individually adjustable.
+
+Report issue for preceding element
+
+After formulating MoEs as expert attention (EA), we arrive at a unified
+view of SA, DA, and EA as an attention mixture over sequence, depth, and
+experts. This provides a unification of knowledge access along all major
+dimensions via attention. Such a homogenous architecture may help to
+better understand and control model behavior, and facilitates modular
+extensibility via additional attention dimensions.
+
+Report issue for preceding element
+
+In summary, our main contributions are as follows:
+
+Report issue for preceding element
+
+ 1. 1.
+
+    Methods: We introduce depth-recurrent attention mixtures, a modular,
+    unifying framework that combines sequence attention, depth
+    attention, and sparse expert attention. It adapts sparse MoEs for
+    depth recurrence and alleviates the hidden-size bottleneck, allowing
+    depth-recurrent models to scale efficiently and effectively.Report
+    issue for preceding element
+ 2. 2.
+
+    Experiments: We perform tightly FLOP-, parameter-, and memory-
+    matched comparisons between our methods and SOTA MoEs, for isolated
+    ablations of depth recurrence and depth attention. We show
+    consistent, large accuracy gains for natural language
+    reasoning.Report issue for preceding element
+ 3. 3.
+
+    Analysis: We provide insights into knowledge usage across depths,
+    from the perspectives of depth attention and expert attention. In
+    high resolution (with over thousand small experts), we quantify
+    knowledge capacity allocation and reuse patterns across depths, and
+    derive practical suggestions for model design.Report issue for
+    preceding element
+
+
+    2 Related Work
+
+Report issue for preceding element
+
+Depth Recurrence and Parameter Sharing across Depth: Depth-recurrent
+(DR) Transformers are introduced by Dehghaniet al. (2018 <https://
+arxiv.org/html/2601.21582v1#bib.bib3>) While laying the groundwork, they
+miss FLOP-matched tests and use a dense DR core, making scaling
+intractable. To address the scalability bottleneck of dense DR, Tanet
+al. (2023 <https://arxiv.org/html/2601.21582v1#bib.bib4>) investigates
+DR with sparse MoEs. However, they still lack FLOP-matching and testing
+of natural language reasoning. Csordáset al. (2024 <https://arxiv.org/
+html/2601.21582v1#bib.bib5>) perform more rigorous and scaled
+experiments with sparse DR, showing slight benefits of DR. However, they
+lack sparse baselines for fair comparisons. Moreover, they rely on
+multi-layer DR cores, in contrast to our minimal, modular single-layer
+architecture. Baiet al. (2022 <https://arxiv.org/
+html/2601.21582v1#bib.bib6>); Tanet al. (2025 <https://arxiv.org/
+html/2601.21582v1#bib.bib7>); Liet al. (2025 <https://arxiv.org/
+html/2601.21582v1#bib.bib8>) investigates the reuse of MoE experts
+across (some adjacent) depths, thus resembling a form of partial/block-
+wise DR with MoEs. However, the partial DR prevents depth-generalized
+and open-ended latent reasoning. The same limitation applies to work of
+Baeet al. (2025 <https://arxiv.org/html/2601.21582v1#bib.bib9>),
+exploring DR with depth-specific LoRA-adapters as relaxation. In 2025,
+we saw a surge of work on DR, for natural language reasoning (Saunshiet
+al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib10>; Geipinget
+al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib11>; Koishekenovet
+al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib12>; Wuet al.,
+2025 <https://arxiv.org/html/2601.21582v1#bib.bib13>; Zhuet al., 2025b
+<https://arxiv.org/html/2601.21582v1#bib.bib14>; McLeishet al., 2025
+<https://arxiv.org/html/2601.21582v1#bib.bib15>) and small models for
+symbolic problems (Darlowet al., 2025 <https://arxiv.org/
+html/2601.21582v1#bib.bib16>; Wanget al., 2025a <https://arxiv.org/
+html/2601.21582v1#bib.bib17>; Jolicoeur-Martineau, 2025 <https://
+arxiv.org/html/2601.21582v1#bib.bib18>). Despite the intractability of
+scaling dense DR, most of these works use dense models. Moreover, as
+proposed by Geipinget al. (2025 <https://arxiv.org/
+html/2601.21582v1#bib.bib11>), many of them, especially for natural
+language, use dedicated encoders/decoders around the DR core. In
+contrast, we show that purely a single-layer DR core is sufficient. It
+can learn such dedicated roles of encoding/decoding on its own if
+useful, while maintaining a homogeneous architecture, maximizing
+knowledge reuse and facilitating interpretability and modular
+extensibility. Further, it allows batching of inference steps in
+different depths, e.g. for speculative decoding and/or batched sequences
+with different/dynamic depths. In addition, all mentioned works on DR so
+far ignore the hidden-size bottleneck, which becomes more pronounced as
+depth increases and more reasoning shifts from the sequence into the
+depth dimension. In contrast, our work addresses both hidden-size
+bottleneck and dense layer-size bottleneck.
+
+Report issue for preceding element
+
+Other Latent Reasoning Approaches: Jaegleet al. (2021 <https://
+arxiv.org/html/2601.21582v1#bib.bib19>) decouples input and latent
+reasoning dimensions by cross-attending to the input sequence from a
+latent, recurrent dimension. However, training is not naively
+parallelizable across the output sequence. As another alternative, Haoet
+al. (2024 <https://arxiv.org/html/2601.21582v1#bib.bib2>) generates
+continuous latent tokens between discrete I/O tokens in the sequence
+dimension. However, this neither supports naive sequence-parallel
+training nor leverages knowledge-reuse across depths. Moreover, latent
+steps extend the sequence length, thus increase memory and compute
+requirements. In contrast, our use of DR with depth attention operates
+on the depth dimension, overwriting keys/values of depth attention after
+each token, thus incurring only negligible compute and memory overhead,
+while still supporting sequence-parallel training.
+
+Report issue for preceding element
+
+Depth Attention and Skip Connections: As precursor to depth attention
+(DA), Huanget al. (2017 <https://arxiv.org/html/2601.21582v1#bib.bib20>)
+explores skip connections between all layers, although only for shallow
+convolution networks for vision. A different approach by Pagliardiniet
+al. (2024 <https://arxiv.org/html/2601.21582v1#bib.bib21>) averages
+hidden-states from previous layers, weighted by fixed learned weights.
+Xiaoet al. (2025 <https://arxiv.org/html/2601.21582v1#bib.bib22>)
+computes dynamic weights for such an aggregation via an MLP. All these
+methods still do not resemble proper dot-product attention along the
+depth. In contrast, Fanget al. (2023 <https://arxiv.org/
+html/2601.21582v1#bib.bib23>) and Clasteret al. (2025 <https://
+arxiv.org/html/2601.21582v1#bib.bib24>) do use such proper DA. However,
+they only explore small models for vision, time-series, or sentiment
+analysis. Moreover, these works do not provide tightly FLOP-,
+parameter-, and memory-matched ablations by compensating for the small
+yet noticeable resource overhead of DA. Further, the effect of DA in the
+context of depth recurrence is still unexplored. This aspect is
+especially of interest because DA is designed to alleviate the hidden-
+size bottleneck, which may be even more beneficial for depth-recurrent
+models, since they are intended to scale in depth to support more
+complex latent reasoning.
+
+Report issue for preceding element
+
+
+    3 Methods
+
+Report issue for preceding element
+
+
+      3.1 Overview: Depth-Recurrent Attention Mixture
+
+Report issue for preceding element
+
+We construct a layer that combines attention over multiple dimensions.
+While such mixture of attention is proposed as general concept, the
+instantiation tested in this work comprises three orthogonal attention
+dimensions: sequence, depth, and experts. In our case, (only) the expert
+attention is sparse. The resulting layer is applied repeatedly, building
+up the depth, to facilitate latent recurrent reasoning, knowledge
+sharing across depths, and thus compositional generalization. Figure 1
+<https://arxiv.org/html/2601.21582v1#S1.F1> depicts a high-level view
+over the architecture. Figure 2 <https://arxiv.org/
+html/2601.21582v1#S3.F2> shows the relation of queries, keys, and values
+by unfolding sequence and depth dimensions.
+
+Report issue for preceding element
+
+Refer to caption
+
+Report issue for preceding element
+Figure 2: Unfolded high-level illustration of depth-recurrent attention
+mixture (Dreamer). It shows the three attention dimensions in this
+instantiation: sequence attention (horizontal), depth attention
+(vertical), and expert attention (z-axis). Filled boxes indicate active
+elements in current/latest token and depth, while unfilled boxes are
+inactive. Q/K/V = query/key/value.
+
+Report issue for preceding element
+
+
+      3.2 Background: Attention
+
+Report issue for preceding element
+
+The (single-head) self-attention of Transformers (Vaswaniet al., 2017
+<https://arxiv.org/html/2601.21582v1#bib.bib25>) aggregates values VV
+[m,v][m,v] via scaled dot-product between queries QQ [m,k][m,k] and keys
+KK [m,k][m,k]:
+
+Report issue for preceding element
+		Attn⁡(Q,K,V)=σ​(Q​KTk)​V\displaystyle\operatorname{Attn}
+(Q,K,V)=\sigma\left(\frac{QK^{T}}{\sqrt{k}}\right)V 		(1)
+
+By default, the activation function σ\sigma is defined as
+softmax\operatorname{softmax} with upper triangular mask for causal
+attention. The generalization to multi-head (Vaswaniet al., 2017
+<https://arxiv.org/html/2601.21582v1#bib.bib25>) and grouped-query
+attention (Ainslieet al., 2023 <https://arxiv.org/
+html/2601.21582v1#bib.bib26>) applies as usual.
+
+Report issue for preceding element
+
+
+      3.3 Sequence Attention (SA)
+
+Report issue for preceding element
+
+The standard Transformer-like instance of Attn\operatorname{Attn}
+operates along the sequence dimension (i.e. Attn\operatorname{Attn}’s
+m≡m\equiv sequence length). We therefore call it sequence attention
+(SA), to disambiguate our attention variants. QQ, KK, and VV are
+projected from normalized hidden-states. In our case, QQ and KK are
+position-encoded via RoPE (Suet al., 2024 <https://arxiv.org/
+html/2601.21582v1#bib.bib27>) and normalized via RMSNorm (Zhang and
+Sennrich, 2019 <https://arxiv.org/html/2601.21582v1#bib.bib28>).
+
+Report issue for preceding element
+
+
+      3.4 Depth Attention (DA)
+
+Report issue for preceding element
+
+Analogously to SA, depth attention (DA) applies a separate instance of
+attention over the previous depths of the same token (i.e.
+Attn\operatorname{Attn}’s m≡m\equiv depth). One may see this as a
+transposed resp. vertical Transformer. Similar to how SA in standard
+Transformers alleviates the hidden-size bottleneck of RNNs in the
+sequence direction, DA alleviates the hidden-size bottleneck in the
+depth direction.
+
+Report issue for preceding element
+
+We can implement DA by treating the sequence as batch and the depth as
+sequence dimension. With a key-value cache and PyTorch, a basic
+implementation may look like in Algorithm 1 <https://arxiv.org/
+html/2601.21582v1#alg1>. This allows leveraging existing optimized
+attention implementations for DA.
+
+Report issue for preceding element
+Algorithm 1 Depth Attention
+
+⬇ <data:text/
+plain;base64,YixzLGggPSB4LnNoYXBlCnggPSB4LnZpZXcoYipzLDEsaCkgICAjIG1lcmdlIHNlcSB0byBiYXRjaCwKICAgICAgICAgICAgICAgICAgICAgICAgY3JlYXRlIGRlcHRoIGRpbQp5ID0gYXR0bih4LGt2X2NhY2hlKSAgIyBhdHRlbnRpb24gYXMgdXN1YWwKeSA9IHkudmlldyhiLHMsaCkgICAgICMgcmVjb3ZlciBzZXEgZGlt>
+b,s,h=x.shape
+x=x.view(b*s,1,h)#mergeseqtobatch,
+createdepthdim
+y=attn(x,kv_cache)#attentionasusual
+y=y.view(b,s,h)#recoverseqdim
+Report issue for preceding element
+
+In DA, RoPE encodes the depth instead of sequence positions. Moreover,
+for DA we apply half of RoPE in reverse, i.e. starting at the maximum
+depth. This is to encode forward-looking information about the maximum
+depth, which may be dynamic (though not in our experiments).
+
+Report issue for preceding element
+
+KV-caching works as usual. But contrary to SA, we can drop/overwrite the
+cache for DA after each token during inference. This is because DA
+operates on a per-token cache across depths, in contrast to SA which
+operates on a per-depth cache across tokens. Hence, the memory overhead
+of DA is constant wrt. the sequence length and negligible compared to
+the usually much larger cache for SA.
+
+Report issue for preceding element
+
+
+      3.5 Expert Attention (EA)
+
+Report issue for preceding element
+
+We instantiate a third attention variant, now operating over MLP
+experts, hence the name expert attention (EA). This results in a mixture
+of experts (MoE). Accordingly, each value vector is computed by a
+separate MLP. Keys are provided as learnable fixed weights, as usual for
+MoEs. However, in contrast to standard MoEs, we compute the queries and
+attention score logits like in DA. Hence, while being a form of MoE, EA
+retains characteristics of attention: low-rank attention scores via
+queries and keys, for efficiently scaling the number of experts; and
+(depth) position encodings like DA, in order to facilitate depth-
+dependent expert selection.
+
+Report issue for preceding element
+
+To efficiently scale the (depth-recurrent) layer, we use sparse
+attention scores, resulting in a sparse MoEs, i.e. only a subset of
+experts have to be executed. Since sparsity introduces non-
+differentiability and balancing challenges, we leverage routing and
+balancing strategies similar to DeepSeek-V3 (Liuet al., 2024 <https://
+arxiv.org/html/2601.21582v1#bib.bib29>). Accordingly, we define the
+attention activation function of EA as
+
+Report issue for preceding element
+		σ​
+(x)=norm⁡(TopK⁡(sigmoid⁡(x),x+b,k))\displaystyle\sigma(x)=\operatorname{norm}(\operatorname{TopK}(\operatorname{sigmoid}(x),x+b,k)) 		(2)
+		with TopK(x,w,k)i,j=xi,j⋅1j∈TopKIds⁡(wi,k).
+\displaystyle\text{with }\operatorname{TopK}(x,w,k)_{i,j}=x_{i,j}\cdot
+1_{j\in\operatorname{TopKIds}(w_{i},k)}. 	
+
+Balancing is done via bias vector bb, updated according to
+
+Report issue for preceding element
+		b←b+λ​sign⁡(median⁡(N)−N)\displaystyle b\leftarrow b+
+\lambda\operatorname{sign}(\operatorname{median}(N)-N) 		(3)
+
+with update rate λ\lambda. NiN_{i} counts how often expert ii was used
+since the last update. This is slightly different from DeepSeek-V3
+because we have no notion of expert overload. To determine the bias
+update direction, we use the median expert usage count as baseline.
+Therefore, the statistical average of bb remains zero.
+
+Report issue for preceding element
+
+
+      3.6 Attention Mixture
+
+Report issue for preceding element
+
+Combining DA, SA, and EA can be done sequentially:
+
+Report issue for preceding element
+		yDA,l=xl+DA⁡(x:l)\displaystyle y_{\operatorname{DA},l}=x_{l}+
+\operatorname{DA}(x_{:l}) 		(4)
+		ySA,l=yDA,l+SA⁡(yDA,l)\displaystyle y_{\operatorname{SA},l}
+=y_{\operatorname{DA},l}+\operatorname{SA}(y_{\operatorname{DA},l}) 	
+		yl=ySA,l+EA⁡(ySA,l)\displaystyle y_{l}=y_{\operatorname{SA},l}+
+\operatorname{EA}(y_{\operatorname{SA},l}) 	
+
+In such a declarative form, at each depth ll, DA consumes all previous
+hidden-states x:lx_{:l} [l,b,s,h][l,b,s,h] with batch size bb, sequence
+length ss, and hidden-size hh, while the other components and outputs
+are only concerned with the latest depth’s states. In practice however,
+only the latest hidden state is passed on, together with cached keys/
+values for DA and SA. Regarding the order of DA, SA, and EA, we saw only
+small accuracy differences, especially with large depth.
+
+Report issue for preceding element
+
+For improved throughput, DA, SA, and/or EA may be parallelized, e.g.
+yielding a partially parallel variant like
+
+Report issue for preceding element
+		yDA+SA,l=xl+DA⁡(x:l)+SA⁡(xl)\displaystyle y_{\operatorname{DA+SA},l}
+=x_{l}+\operatorname{DA}(x_{:l})+\operatorname{SA}(x_{l}) 		(5)
+		yl=yDA+SA,l+EAl⁡(yDA+SA,l)\displaystyle y_{l}
+=y_{\operatorname{DA+SA},l}+\operatorname{EA}_{l}
+(y_{\operatorname{DA+SA},l}) 	
+
+or a fully parallel variant like
+
+Report issue for preceding element
+		yl=xl+DA⁡(x:l)+SA⁡(xl)+EA⁡(xl).\displaystyle y_{l}=x_{l}+
+\operatorname{DA}(x_{:l})+\operatorname{SA}(x_{l})+\operatorname{EA}
+(x_{l}). 		(6)
+
+In small tests at the scale of ca. 1B parameters, each additional
+parallelization yielded ca. 15% speedup at the cost of up to 10–20%
+higher benchmark error rates. For larger models, the tradeoff might
+improve and be worth it. But in this work, we follow Equation 5
+<https://arxiv.org/html/2601.21582v1#S3.E5>.
+
+Report issue for preceding element
+
+The concept of attention mixtures as general foundation is modular and
+extensible. Depending on the application, different attention dimensions
+may be added. Some possibilities are mentioned in Section 5 <https://
+arxiv.org/html/2601.21582v1#S5>.
+
+Report issue for preceding element
+
+
+      3.7 Depth Recurrence (DR)
+
+Report issue for preceding element
+
+Reusing layers/weights across depths seems straightforward. However,
+when increasing the depth, the scales of residuals and their additive
+updates can become incompatible across depths, which prevents learning
+depth-generalized experts. Hence, for our depth-recurrent variants, we
+apply RMSNorm to the residual stream itself, i.e. xl+1=Norm⁡(yl)x_{l+1}
+=\operatorname{Norm}(y_{l}).
+
+Report issue for preceding element
+
+As another intricacy of depth recurrence, enforcing the attention
+modules to reuse their projection weights across depths leads to worse
+performance than without such reuse. To mitigate this, while still
+maintaining a fully depth-recurrent architecture, we turn each fused
+query/key/value projection and each multi-head attention aggregation
+into a lightweight, sparse MoE, similar to EA. The attention scores are
+tied between the two MoEs, which reduces routing overhead and stabilizes
+training. Balancing and routing work analogously to the MLP-EA
+(Equations 2 <https://arxiv.org/html/2601.21582v1#S3.E2> and 3 <https://
+arxiv.org/html/2601.21582v1#S3.E3>). However, here for the attention
+MoEs, we use linear experts WW, to further reduce compute costs and
+improve stability during training. Moreover, we only select the top-1
+expert, and thus do not apply score normalization.
+
+Report issue for preceding element
+
+In such a sparse MoE, learning good routing scores becomes harder,
+because top-1 selection removes all information about alternative
+experts from the gradient. To improve this, we introduce a shared,
+always active expert WsharedW_{\text{shared}}. In contrast to usual
+shared experts in MoEs, we scale it by the same (max) score as the
+selected routable expert, though with stopped gradient flow
+(σ^\widehat{\sigma}), i.e.
+
+Report issue for preceding element
+		σ​x​W+max⁡(σ^)​x​Wshared\displaystyle\sigma xW+
+\max(\widehat{\sigma})xW_{\text{shared}} 		(7)
+
+where σ\sigma is a shorthand for the one-hot routing scores described
+earlier. This introduction of a baseline output helps learning of useful
+and well balanced routing. At the same time, the combination of linear
+experts and the scaling the shared expert allows us to rewrite the
+forward pass as
+
+Report issue for preceding element
+		σ​x​(W+Wshared).\displaystyle\sigma x(W+W_{\text{shared}}). 		(8)
+
+Hence, the shared expert can be added to the routable experts prior to
+inference. This fully eliminates the compute and memory overhead of the
+shared expert. Compared to standard attention, only the MoE routing
+remains a slight overhead, which we also account for in our FLOP-matching.
+
+Report issue for preceding element
+
+
+      3.8 FLOP- and Parameter-Matching
+
+Report issue for preceding element
+
+We want to compare different models in a fair way. Accordingly, all
+models of the same depth should have a very similar number of parameters
+and floating-point-operations (FLOPs) per token. To achieve this, we
+follow a bivariate coordinate descent approach. First, we adjust the
+intermediate MLP sizes of EA via binary search, until FLOPs are as close
+as possible to a baseline. Then, we adjust the number of experts of EA
+via binary search, until the total parameter count is as close as
+possible to the baseline. We then repeat FLOP-matching to account for
+the changed number of experts, since this slightly affects EA routing
+FLOPs. After the second FLOP-matching, the hyperparameter optimization
+loop converges. As a result of our tight FLOP-matching, the slight
+compute overhead of DR’s larger number of experts per depth as well as
+the compute overhead of DA are compensated fairly, yielding a meaningful
+comparison with similar resource requirements (Table 1 <https://
+arxiv.org/html/2601.21582v1#S3.T1>).
+
+Report issue for preceding element
+Table 1: Model resource requirements. Average FLOPs per token and total
+memory are both measured over a generated sequence length of 1024
+tokens. As intended, our FLOP- and parameter-matching results in closely
+aligned resource requirements.
+
+Model 	Depth 	Params 	FLOPs 	Memory
+		(B) 	(B/tok) 	(GB)
+LA 	16 	1.1708 	0.9389 	4.7827
+DR 	16 	1.1704 	0.9389 	4.7822
+DR+DA 	16 	1.1708 	0.9413 	4.7839
+LA 	32 	2.0790 	1.6150 	6.6337
+DR 	32 	2.0794 	1.6199 	6.6343
+DR+DA 	32 	2.0788 	1.6130 	6.6349
+
+Report issue for preceding element
+
+
+    4 Experiments
+
+Report issue for preceding element
+
+In the following, we first describe our experimental setup. We then
+discuss evaluation results and further investigate the latent behavior
+of our depth-recurrent models through the lense of DA and EA.
+
+Report issue for preceding element
+
+
+      4.1 Reasoning and Language Modeling
+
+Report issue for preceding element
+
+We want to assess the effectiveness of our methods on natural language
+tasks, with a focus on math. This way we are able to test factual
+knowledge, language understanding/modeling, and reasoning, while keeping
+the computational requirements small enough to reach near-convergence,
+for reliable results.
+
+Report issue for preceding element
+
+Refer to caption
+
+Report issue for preceding element
+Figure 3: Math reasoning benchmark results (0-shot) during training,
+comparing the best accuracies of classical layering (LA), depth
+recurrence (DR), and DR with depth attention (DR+DA).
+
+Report issue for preceding element
+Table 2: Evaluation results, including validation perplexity (PPL) and
+accuracies (Acc) on math reasoning benchmarks. We compare our best
+results of classical layering (LA), depth recurrence (DR), and DR with
+depth attention (DR+DA). All models are trained on ca. 100B tokens.
+Models with the same depth are tightly FLOP-, parameter-, and memory-
+matched. Data efficiency (DE) measures the saving factor of training
+tokens to reach LA’s best accuracy. Bold+underlined: best; underlined:
+second-best.
+
+Model 	Depth 	Maths- 	GSM8K 	MATH 	MMLU (math) 	MathQA 	Average
+		College 	(0-shot) 	(0-shot) 	(0-shot) 	(0-shot) 	
+		PPL ↓\downarrow 	Acc ↑\uparrow 	DE ↑\uparrow 	Acc ↑\uparrow 	DE
+↑\uparrow 	Acc ↑\uparrow 	DE ↑\uparrow 	Acc ↑\uparrow 	DE ↑\uparrow 	Acc
+↑\uparrow 	DE ↑\uparrow
+LA (baseline) 	16 	6.74 	43.8 	1.0 	40.9 	1.0 	26.6 	1.0 	22.9 	1.0 	
+32.3 	1.0
+DR (ours) 	16 	6.64 	47.6 	1.6 	47.8 	2.8 	44.5 	4.8 	45.6 	5.4 	45.7 	4.0
+DR+DA (ours) 	16 	6.41 	51.7 	2.4 	50.7 	3.5 	38.5 	3.4 	37.1 	3.2 	43.4
+	2.9
+LA (baseline) 	32 	6.31 	49.7 	1.0 	48.2 	1.0 	37.2 	1.0 	26.0 	1.0 	
+39.5 	1.0
+DR (ours) 	32 	6.12 	51.5 	1.5 	51.3 	2.1 	45.3 	1.9 	43.2 	5.4 	47.6 	2.6
+DR+DA (ours) 	32 	5.90 	56.3 	2.3 	54.5 	2.6 	50.0 	4.0 	50.8 	8.3 	51.4
+	3.5
+
+Report issue for preceding element
+
+We compare three main architecture variants, at depth 16 (ca. 1B
+parameters) and depth 32 (ca. 2B parameters): (i) LA, a non-DR variant
+of our model, resembling a classically layered SOTA MoE, which serves as
+our baseline; (ii) DR, our depth-recurrent model without DA; (iii)
+DR+DA, our combination of depth recurrence and depth attention. All
+models use sparse MoEs resp. EA, for scalability, FLOP- and parameter-
+matching. To get isolated ablations of DR and DA, we keep the
+architectural differences to a minimum and use the same hyperparameters
+across models of the same depth. Exceptions are the MLP intermediate
+sizes and the number of experts for EA, which are adjusted for FLOP- and
+parameter-matching as described in Section 3.8 <https://arxiv.org/
+html/2601.21582v1#S3.SS8>. Detailed hyperparameters for reproduction are
+listed in Table 3 <https://arxiv.org/html/2601.21582v1#A1.T3>. The
+resulting resource requirements of all models are shown in Table 1
+<https://arxiv.org/html/2601.21582v1#S3.T1>. As intended, our FLOP- and
+parameter-matching results in tight alignment of FLOPs, parameter
+counts, and memory usage across all models of the same depth.
+
+Report issue for preceding element
+
+As training data, we use ca. 100B tokens from a mix of openly available
+instruction datasets (Table 4 <https://arxiv.org/
+html/2601.21582v1#A1.T4>). We perform cleaning, deduplication, and
+decontamination. CoT traces are removed, since (i) we aim for latent
+reasoning instead, and (ii) the available CoT traces are often very long
+and have a low signal-to-noise ratio. Even without CoT traces, the
+responses usually still contain concise explanations of the solutions.
+Hence, our training data strikes a balance between enough intermediate
+guidance and reduced verbalization, relying on latent reasoning for details.
+
+Report issue for preceding element
+
+To obtain meaningful results, we account for stochastic factors like
+model initialization and data order. For this, we train each model with
+two different seeds on 25B tokens and continue the run with the better
+loss. Each presented model produced very similar loss trajectories in
+their two runs, indicating that our results are robust to seed choice.
+
+Report issue for preceding element
+
+We test reasoning accuracy on common natural language math benchmarks
+and on a math-focused subset of MMLU (abstract_algebra,
+elementary_mathematics, high_school_mathematics, college_mathematics,
+high_school_statistics) (Cobbeet al., 2021 <https://arxiv.org/
+html/2601.21582v1#bib.bib30>; Hendryckset al., 2021b <https://arxiv.org/
+html/2601.21582v1#bib.bib31>, a <https://arxiv.org/
+html/2601.21582v1#bib.bib32>; Aminiet al., 2019 <https://arxiv.org/
+html/2601.21582v1#bib.bib33>). And we test language modeling on Maths-
+College (ajibawa-2023/Maths-College <https://huggingface.co/datasets/
+ajibawa-2023/Maths-College>), educational math texts.
+
+Report issue for preceding element
+
+Table 2 <https://arxiv.org/html/2601.21582v1#S4.T2> and Figure 3
+<https://arxiv.org/html/2601.21582v1#S4.F3> show a strong benefit of
+both DR and DR+DA over the classically layered baseline (LA) at all
+scales and tests. DR+DA with depth 16 even outperforms LA with depth 32
+in all reasoning benchmarks (contrary to pure DR). This means nearly a
+2×\times reduction of parameter count, FLOPs, and memory usage. With
+depth 16, we observe that DR outperforms DR+DA on half of the reasoning
+benchmarks (due to reduced MLP size for FLOP-matching). But with depth
+32, DR+DA strongly outperforms not only LA but also DR. Contrary to pure
+DR, DR+DA yields even larger gains over LA when depth increases.
+
+Report issue for preceding element
+
+These results suggest that for shallow models (depth ≤\leq 16), DR
+without DA may be preferable in some cases, while DA especially shines
+in deeper models. An intuitive explanation is that deeper models suffer
+more from the hidden-size bottleneck, since more information accumulated
+across depths. Hence, DA is particularly effective for improving the
+scaling behavior. However, more rigorous scaling laws are still needed
+and left for future work. Further considerations about DA, including
+variations, are discussed in Section 5 <https://arxiv.org/
+html/2601.21582v1#S5>.
+
+Report issue for preceding element
+
+
+      4.2 Analyzing Depth Attention and Expert Attention
+
+Report issue for preceding element
+
+Refer to caption
+
+Report issue for preceding element
+Figure 4: Map of average DA scores, normalized and scaled per depth for
+visualization. Nontrivial patterns suggest extended expressivity beyond
+uniform skip-connections.
+
+Report issue for preceding element
+
+We collect statistics of the DR+DA model with depth 32 over 1000 random
+sequences from our validation data. Figure 4 <https://arxiv.org/
+html/2601.21582v1#S4.F4> shows the average attention scores of DA. While
+being only a superficial perspective, it reveals nontrivial patterns.
+Early depths typically look back to the first few depths, followed by
+more diverse DA patterns, after which middle depths are recalled. In the
+end, middle to high depths inform the final output. While further
+interpretability/explainability work is needed to properly understand
+such patterns, they already indicate that DA meaningfully extends the
+expressivity beyond uniform skip-connections, hence leading to more
+targeted information routing between depths.
+
+Report issue for preceding element
+
+Refer to caption
+
+Report issue for preceding element
+Figure 5: Distribution of depths per expert. Experts are sorted by the
+number of depths in their top 90th percentile of sorted P​(depth|
+expert)P(\text{depth}|\text{expert}), as a measure of depth-
+generalization. Within these groups, experts are sorted by sampled depth
+from their distributions. Observations: Higher depths use more depth-
+specialized experts. Ca. 50% of experts are widely depth-generalized.
+
+Report issue for preceding element
+
+We investigate the EA behavior, showing the distribution of depths per
+expert in Figure 5 <https://arxiv.org/html/2601.21582v1#S4.F5>. Since
+experts have no inherent order, we first group and sort them by the
+number of depths in the top 90th percentile of their depth distribution,
+P​(depth|expert)P(\text{depth}|\text{expert}). This effectively sorts
+experts by increasing depth-generalization. Within each group, we sort
+experts by a sample from their depth distributions. This yields a
+meaningful order while still faithfully representing the distributions.
+With the resulting plot, we obtain several interesting insights and
+implications for model design. Depths ≥\geq50% use almost all of the
+highly depth-specialized experts. This results in ca. 22% of experts
+preferring one or two depths ≥\geq50%. In particular, the last depth
+owns the most experts dedicated to a single depth. Hence, one may model
+this behavior via a decoding layer. In contrast, depths <<50% use more
+depth-generalized than -specialized experts. Almost no experts are
+dedicated to one or two depths <<50%. Hence, for these depths, the rigid
+layer separation of traditional models is most restrictive. We further
+observe that most experts with only two or three depths distribute their
+usage across adjacent depths (±1\pm 1). Hence, they are not fully depth-
+generalized. A sliding window over experts, or a hierarchical expert
+subset selection, could model this patterns while reducing routing
+costs. Finally, we see that ca. 50% of experts are each used in at least
+7 depths (i.e. >>20% of depths). This indicates knowledge reuse and
+depth-generalization beyond just adjacent depths. Therefore, the model
+makes heavy use of the extended flexibility of DR. Hence, to facilitate
+such behavior, at least a subset of experts should be selectable from
+all depths.
+
+Report issue for preceding element
+
+Refer to caption
+
+Report issue for preceding element
+Figure 6: Lorenz curves (log-scaled) for EA expert routing. This shows
+how many expert routings occurred vs. how many unique experts were used.
+For DR per depth (colored), DR globally (thin dotted), and LA per depth
+(= globally) (thick dashed). Observations: DR uses 2–11×\times more
+experts per depth than LA, while global expert balancing remains strong
+(Gini: 0.075).
+
+Report issue for preceding element
+
+To further quantify the expert usage per depth, in Figure 6 <https://
+arxiv.org/html/2601.21582v1#S4.F6>, we relate each portion of expert
+activations (i.e. how many expert routings occurred) to the portion of
+total experts activated (i.e. how many experts were used). The plot
+therefore represents Lorenz curves (per depth and globally). A perfect
+linear relationship (i.e. log-curve, due to log-scaled y-axis) means
+uniform sampling of experts. Again, we obtain several interesting
+observations and implications. Low depths use up to ca. 5×\times more
+experts than high depths. In particular, the last two depths use much
+fewer experts than all others. Assuming that this is governed by the
+optimization objective, it suggests that in traditional MoEs the
+prevalent uniform distribution of experts across layers is suboptimal.
+We further observe that DR uses 2–11×\times more experts than what LA
+can use. This large gain in flexibility of knowledge usage in all depths
+provides yet another argument for choosing DR. Finally, in terms of
+expert balancing, we see that our method works well, given that the
+global Lorenz curve closely resembles a linear relationship.
+Consequently, no experts are left underutilized. This means that,
+quantitatively, we observe a low global Gini coefficient of ca. 0.075.
+
+Report issue for preceding element
+
+
+    5 Discussion and Future Work
+
+Report issue for preceding element
+
+Depth Attention: DA may look like it adds large compute and memory
+overhead. However, both is negligible compared to SA, which typically
+operates over a much larger length. What additionally contributes to the
+memory efficiency of DA is the ability to overwrite its kv-cache after
+each token. This keeps the memory footprint constant wrt. the sequence
+length. Further, we want to stress that we compensated for the slight
+compute overhead of DA through our FLOP-matching. As a result, our FLOP-
+and memory-matched comparisons show that the compute and memory costs of
+DA are indeed worth it.
+
+Report issue for preceding element
+
+Nevertheless, there remains a memory movement overhead for DA. In our
+experiments, we keep this overhead small by using a single DA head. As
+shown, this is sufficient to consistently achieve accuracy gains. Given
+that DR+DA with depth 16 can even outperform LA with depth 32, the
+slight overhead of DA can easily be compensated by choosing a slightly
+smaller model. Moreover, we expect future kernel optimizations to
+further improve the efficiency of DA.
+
+Report issue for preceding element
+
+One may also investigate variations of vanilla DA, e.g. to mitigate the
+mentioned memory movement overhead or reduce memory consumption as depth
+increases further. Typical aspects to consider are sliding windows and
+dilation. Moreover, linear attention variants and modern RNNs/SSMs may
+also be used along the depth dimension. In general, we hope that our
+contribution inspires future work to treat depth as first-class
+sequential dimension, going beyond the prevalent basic residual connections.
+
+Report issue for preceding element
+
+Depth Recurrence: This work focused on novel aspects of our DR models,
+comparing against classically layered models with same depth, to achieve
+a FLOP-, parameter-, and memory-matched comparison. Nonetheless, we made
+sure that our architecture in principle already allows dynamic depth. A
+detailed investigation of this aspect is left for future work. Since we
+use RoPE as depth position encoding for DA and EA, one may explore
+dynamic RoPE scaling in this context. But it might also be worth
+considering alternatives to RoPE, possibly improving depth
+generalization. We think that reliably generalizing DR beyond the
+trained depth regime is a critical and still underexplored problem.
+
+Report issue for preceding element
+
+Attention Mixture: We unified information flows as attention along all
+major dimensions, i.e. sequence (like traditional attention), depth
+(like dynamic skip-connections), and experts (like MoEs). This
+perspective may help understanding and controlling model behavior.
+Moreover, while our work focused on the three specific dimensions, the
+proposed notion of attention mixtures is a generic, modular framework.
+For instance, sparse EA may be extended or replaced by parameter
+attention (Wanget al., 2025b <https://arxiv.org/
+html/2601.21582v1#bib.bib34>), and additional knowledge (learned latents
+or text embeddings) may be plugged in as separate attention dimension,
+resembling “in-depth” latent RAG. As the number of attention dimensions
+increases, the described parallel attention mixture variant may then be
+preferable for efficiency. Moreover, the various attention components
+may each be executed asynchronously or only at certain depths, e.g. with
+state-dependent conditional execution similar to a higher-order sparse
+MoE. However, it is still unclear whether such approaches can be
+beneficial in practice, within the constraints of notoriously sparsity-
+averse GPUs/TPUs/etc.
+
+Report issue for preceding element
+
+
+    6 Conclusion
+
+Report issue for preceding element
+
+Our newly introduced depth-recurrent attention mixture (Dreamer)
+addresses two essential bottlenecks of depth recurrence (DR): Sparse
+expert attention alleviates the layer-size bottleneck, thus allowing DR
+to scale efficiently. And depth attention alleviates the hidden-size
+bottleneck, thus allowing DR to scale effectively. The resulting model
+represents a fully depth-recurrent single-layer architecture that
+consistently outperforms a tightly FLOP-, parameter-, and memory-matched
+SOTA Transformer in natural language reasoning benchmarks. We showed
+that depth attention contributes a qualitative extension to
+expressivity, particularly improving the scaling behavior.
+
+Report issue for preceding element
+
+Further, we proposed attention mixtures as modular, unifying framework,
+modeling all major information access through attention, e.g. over
+sequence (like traditional attention), depth (like dynamic skip-
+connections), and experts (like MoEs). We hope that this perspective
+helps understanding and controlling model behavior through the lense of
+attention. Future work may further find inspiration in our work by
+treating depth as first-class sequential dimension, going beyond the
+prevalent fixed layering and residual connections, exploring
+alternatives to vanilla depth attention, or adding other attention
+dimensions.
+
+Report issue for preceding element
+
+
+    7 Acknowledgments
+
+Report issue for preceding element
+
+We thank Letiția Pârcălăbescu for valuable feedback on the paper draft.
+We thank the Aleph Alpha infrastructure team for their work and support
+throughout this project. We thank Tobias Ribizel for infrastructure
+support and the TUM Campus Heilbronn for compute resources during our
+early experiments for this project. We thank Vladimir Golkov and Daniel
+Cremers for their personal support and for enabling various
+extracurricular research, which inspired this project.
+
+Report issue for preceding element
+
+
+    8 Broader Impact Statement
+
+Report issue for preceding element
+
+This work enhances the efficiency and reasoning capabilities of AI by
+introducing a modular, depth-recurrent attention mixture framework. By
+enabling 2–8×\times better data efficiency and ca. 2×\times better
+parameter- and FLOP-efficiency, we make it easier to build high-
+performance models, contributing to making AI potentially more
+sustainable. This allows complex reasoning tasks to be performed with
+significantly fewer computational resources, which is essential for
+deploying advanced AI in the wild. However, we acknowledge potential
+risks. Because our methods improve the model’s ability to reason
+internally (i.e. latent reasoning), it may become harder for humans to
+interpret the exact path the model took to reach a conclusion,
+potentially masking underlying flaws in model behavior and biases in the
+training data. Furthermore, while the system demonstrates improved
+performance, it is not immune to hallucinations and other errors. If the
+model scales its reasoning on top of incorrect premises or intermediate
+steps, it may produce more convincing but ultimately flawed arguments.
+We hope that by providing a unified view of knowledge access along all
+dimensions (sequence, depth, experts) through the lense of attention,
+this work may help the community better understand and eventually
+mitigate these downsides.
+
+Report issue for preceding element
+
+
+    References
+
+Report issue for preceding element
+
+  * J. Ainslie, J. Lee-Thorp, M. De Jong, Y. Zemlyanskiy, F. Lebron, and
+    S. Sanghai (2023)
+    ↑
+
+    GQA: Training Generalized Multi-Query Transformer Models from Multi-
+    Head Checkpoints. In Proceedings of the 2023 Conference on Empirical
+    Methods in Natural Language Processing, pp. 4895–4901. Cited by:
+    §3.2 <https://arxiv.org/html/2601.21582v1#S3.SS2.p1.8>.
+  * A. Amini, S. Gabriel, S. Lin, R. Koncel-Kedziorski, Y. Choi, and H.
+    Hajishirzi (2019)
+    ↑
+
+    Mathqa: Towards interpretable math word problem solving with
+    operation-based formalisms. In Proceedings of the 2019 Conference of
+    the North American Chapter of the Association for Computational
+    Linguistics: Human Language Technologies, pp. 2357–2367. Cited by:
+    §4.1 <https://arxiv.org/html/2601.21582v1#S4.SS1.p5.1>.
+  * S. Bae, A. Fisch, H. Harutyunyan, Z. Ji, S. Kim, and T. Schuster (2025)
+    ↑
+
+    Relaxed recursive transformers: Effective parameter sharing with
+    layer-wise LoRA. In International Conference on Learning
+    Representations, Cited by: §2 <https://arxiv.org/
+    html/2601.21582v1#S2.p1.1>.
+  * Y. Bai, J. Li, W. Han, H. Ni, K. Xu, Z. Zhang, C. Yi, and X. Wang (2022)
+    ↑
+
+    Parameter-Efficient Conformers via Sharing Sparsely-Gated Experts
+    for End-to-End Speech Recognition. In Proc. Interspeech 2022,
+    pp. 1676–1680. Cited by: §2 <https://arxiv.org/
+    html/2601.21582v1#S2.p1.1>.
+  * A. Basant, A. Khairnar, A. Paithankar, A. Khattar, A. Renduchintala,
+    A. Malte, A. Bercovich, A. Hazare, A. Rico, A. Ficek, et al. (2025)
+    ↑
+
+    Nvidia nemotron nano 2: An accurate and efficient hybrid mamba-
+    transformer reasoning model. arXiv preprint arXiv:2508.14444. Cited
+    by: Table 4 <https://arxiv.org/html/2601.21582v1#A1.T4.4.17.16.2>.
+  * W. Claster, S. KM, and D. Gundechia (2025)
+    ↑
+
+    Adaptive integrated layered attention (AILA). arXiv preprint
+    arXiv:2503.22742. Cited by: §2 <https://arxiv.org/
+    html/2601.21582v1#S2.p3.1>.
+  * K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M.
+    Plappert, J. Tworek, J. Hilton, R. Nakano, et al. (2021)
+    ↑
+
+    Training verifiers to solve math word problems. arXiv preprint
+    arXiv:2110.14168. Cited by: Table 4 <https://arxiv.org/
+    html/2601.21582v1#A1.T4.4.8.7.2>, §4.1 <https://arxiv.org/
+    html/2601.21582v1#S4.SS1.p5.1>.
+  * R. Csordás, K. Irie, J. Schmidhuber, C. Potts, and C. D. Manning (2024)
+    ↑
+
+    Moeut: Mixture-of-experts universal transformers. Advances in Neural
+    Information Processing Systems 37, pp. 28589–28614. Cited by: §2
+    <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+  * L. Darlow, C. Regan, S. Risi, J. Seely, and L. Jones (2025)
+    ↑
+
+    Continuous thought machines. arXiv preprint arXiv:2505.05522. Cited
+    by: §2 <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+  * M. Dehghani, S. Gouws, O. Vinyals, J. Uszkoreit, and Ł. Kaiser (2018)
+    ↑
+
+    Universal transformers. arXiv preprint arXiv:1807.03819. Cited by:
+    §2 <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+  * Y. Fang, Y. Cai, J. Chen, J. Zhao, G. Tian, and G. Li (2023)
+    ↑
+
+    Cross-layer retrospective retrieving via layer attention. In
+    International Conference on Learning Representations, Cited by: §2
+    <https://arxiv.org/html/2601.21582v1#S2.p3.1>.
+  * J. Geiping, S. McLeish, N. Jain, J. Kirchenbauer, S. Singh, B. R.
+    Bartoldson, B. Kailkhura, A. Bhatele, and T. Goldstein (2025)
+    ↑
+
+    Scaling up test-time compute with latent reasoning: A recurrent
+    depth approach. arXiv preprint arXiv:2502.05171. Cited by: §2
+    <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+  * E. Guha, R. Marten, S. Keh, N. Raoof, G. Smyrnis, H. Bansal, M.
+    Nezhurina, J. Mercat, T. Vu, Z. Sprague, et al. (2025)
+    ↑
+
+    OpenThoughts: Data recipes for reasoning models. arXiv preprint
+    arXiv:2506.04178. Cited by: Table 4 <https://arxiv.org/
+    html/2601.21582v1#A1.T4.4.10.9.2>.
+  * S. Hao, S. Sukhbaatar, D. Su, X. Li, Z. Hu, J. Weston, and Y. Tian
+    (2024)
+    ↑
+
+    Training large language models to reason in a continuous latent
+    space. arXiv preprint arXiv:2412.06769. Cited by: §1 <https://
+    arxiv.org/html/2601.21582v1#S1.p2.1>, §2 <https://arxiv.org/
+    html/2601.21582v1#S2.p2.1>.
+  * Z. He, T. Liang, J. Xu, Q. Liu, X. Chen, Y. Wang, L. Song, D. Yu, Z.
+    Liang, W. Wang, et al. (2025)
+    ↑
+
+    Deepmath-103k: A large-scale, challenging, decontaminated, and
+    verifiable mathematical dataset for advancing reasoning. arXiv
+    preprint arXiv:2504.11456. Cited by: Table 4 <https://arxiv.org/
+    html/2601.21582v1#A1.T4.4.15.14.2>.
+  * D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and
+    J. Steinhardt (2021a)
+    ↑
+
+    Measuring massive multitask language understanding. In International
+    Conference on Learning Representations, Cited by: §4.1 <https://
+    arxiv.org/html/2601.21582v1#S4.SS1.p5.1>.
+  * D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang,
+    D. Song, and J. Steinhardt (2021b)
+    ↑
+
+    Measuring mathematical problem solving with the MATH dataset.
+    Advances in neural information processing systems. Cited by: Table 4
+    <https://arxiv.org/html/2601.21582v1#A1.T4.4.2.1.2>, §4.1 <https://
+    arxiv.org/html/2601.21582v1#S4.SS1.p5.1>.
+  * A. Hochlehnert, H. Bhatnagar, V. Udandarao, A. Prabhu, and M. Bethge
+    (2025)
+    ↑
+
+    CuratedThoughts: Data curation for RL training datasets. Note:
+    https://hugging-face.co/datasets/bethgelab/CuratedThoughts Cited by:
+    Table 4 <https://arxiv.org/html/2601.21582v1#A1.T4.4.3.2.2>.
+  * G. Huang, Z. Liu, L. Van Der Maaten, and K. Q. Weinberger (2017)
+    ↑
+
+    Densely connected convolutional networks. In Proceedings of the IEEE
+    Conference on Computer Vision and Pattern Recognition, pp. 4700–
+    4708. Cited by: §2 <https://arxiv.org/html/2601.21582v1#S2.p3.1>.
+  * A. Jaegle, F. Gimeno, A. Brock, O. Vinyals, A. Zisserman, and J.
+    Carreira (2021)
+    ↑
+
+    Perceiver: General perception with iterative attention. In
+    International Conference on Machine Learning, pp. 4651–4664. Cited
+    by: §2 <https://arxiv.org/html/2601.21582v1#S2.p2.1>.
+  * A. Jolicoeur-Martineau (2025)
+    ↑
+
+    Less is more: Recursive reasoning with tiny networks. arXiv preprint
+    arXiv:2510.04871. Cited by: §2 <https://arxiv.org/
+    html/2601.21582v1#S2.p1.1>.
+  * D. P. Kingma and J. Ba (2015)
+    ↑
+
+    Adam: A method for stochastic optimization. In International
+    Conference on Learning Representations, Cited by: Table 3 <https://
+    arxiv.org/html/2601.21582v1#A1.T3.8.8.32.24.2>.
+  * Y. Koishekenov, A. Lipani, and N. Cancedda (2025)
+    ↑
+
+    Encode, Think, Decode: Scaling test-time reasoning with recursive
+    latent thoughts. arXiv preprint arXiv:2510.07358. Cited by: §2
+    <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+  * B. Li, Y. Li, Z. Li, C. Liu, W. Liu, G. Niu, Z. Tan, H. Xu, Z. Yao,
+    T. Yuan, et al. (2025)
+    ↑
+
+    Megrez2 technical report. arXiv preprint arXiv:2507.17728. Cited by:
+    §2 <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+  * J. LI, E. Beeching, L. Tunstall, B. Lipkin, R. Soletskyi, S. C.
+    Huang, K. Rasul, L. Yu, A. Jiang, Z. Shen, Z. Qin, B. Dong, L. Zhou,
+    Y. Fleureau, G. Lample, and S. Polu (2024)
+    ↑
+
+    NuminaMath: The largest public dataset in AI4Maths with 860k pairs
+    of competition math problems and solutions. Note: https://
+    github.com/project-numina/aimo-progress-prize/blob/main/report/
+    numina_dataset.pdf Cited by: Table 4 <https://arxiv.org/
+    html/2601.21582v1#A1.T4.4.11.10.2>.
+  * A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C.
+    Zhang, C. Ruan, et al. (2024)
+    ↑
+
+    Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437. Cited
+    by: §3.5 <https://arxiv.org/html/2601.21582v1#S3.SS5.p2.6>.
+  * I. Loshchilov and F. Hutter (2019)
+    ↑
+
+    Decoupled weight decay regularization. In International Conference
+    on Learning Representations, Cited by: Table 3 <https://arxiv.org/
+    html/2601.21582v1#A1.T3.8.8.32.24.2>.
+  * S. M. McLeish, A. Li, J. Kirchenbauer, D. S. Kalra, B. R.
+    Bartoldson, B. Kailkhura, A. Schwarzschild, J. Geiping, M. Goldblum,
+    and T. Goldstein (2025)
+    ↑
+
+    Teaching pretrained language models to think deeper with retrofitted
+    recurrence. In NeurIPS 2025 Workshop on Efficient Reasoning, Cited
+    by: §2 <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+  * A. Mitra, H. Khanpour, C. Rosset, and A. Awadallah (2024)
+    ↑
+
+    Orca-math: Unlocking the potential of slms in grade school math.
+    arXiv preprint arXiv:2402.14830. Cited by: Table 4 <https://
+    arxiv.org/html/2601.21582v1#A1.T4.4.6.5.2>.
+  * I. Moshkov, D. Hanley, I. Sorokin, S. Toshniwal, C. Henkel, B.
+    Schifferer, W. Du, and I. Gitman (2025)
+    ↑
+
+    Aimo-2 winning solution: Building state-of-the-art mathematical
+    reasoning models with openmathreasoning dataset. arXiv preprint
+    arXiv:2504.16891. Cited by: Table 4 <https://arxiv.org/
+    html/2601.21582v1#A1.T4.4.14.13.2>.
+  * T. Q. Nguyen and J. Salazar (2019)
+    ↑
+
+    Transformers without tears: Improving the normalization of self-
+    attention. In Proceedings of the 16th International Conference on
+    Spoken Language Translation, Cited by: Table 3 <https://arxiv.org/
+    html/2601.21582v1#A1.T3.3.3.3.1>, Table 3 <https://arxiv.org/
+    html/2601.21582v1#A1.T3.8.8.30.22.2>.
+  * M. Pagliardini, A. Mohtashami, F. Fleuret, and M. Jaggi (2024)
+    ↑
+
+    DenseFormer: Enhancing information flow in transformers via depth
+    weighted averaging. In Advances in Neural Information Processing
+    Systems, Cited by: §2 <https://arxiv.org/html/2601.21582v1#S2.p3.1>.
+  * N. Saunshi, N. Dikkala, Z. Li, S. Kumar, and S. J. Reddi (2025)
+    ↑
+
+    Reasoning with latent thoughts: On the power of looped transformers.
+    In International Conference on Learning Representations, Cited by:
+    §2 <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+  * N. Shazeer (2020)
+    ↑
+
+    Glu variants improve transformer. arXiv preprint arXiv:2002.05202.
+    Cited by: Table 3 <https://arxiv.org/html/2601.21582v1#A1.T3.1.1.1.1>.
+  * J. Su, M. Ahmed, Y. Lu, S. Pan, W. Bo, and Y. Liu (2024)
+    ↑
+
+    Roformer: Enhanced transformer with rotary position embedding.
+    Neurocomputing 568, pp. 127063. Cited by: §3.3 <https://arxiv.org/
+    html/2601.21582v1#S3.SS3.p1.8>.
+  * S. Tan, Y. Shen, Z. Chen, A. Courville, and C. Gan (2023)
+    ↑
+
+    Sparse universal transformer. In The 2023 Conference on Empirical
+    Methods in Natural Language Processing, Cited by: §2 <https://
+    arxiv.org/html/2601.21582v1#S2.p1.1>.
+  * Z. Tan, Z. Li, T. Yuan, D. Zhou, W. Liu, Y. Zhuang, Y. Li, G. Niu,
+    C. Qin, Z. Yao, C. Liu, H. Xu, B. Li, G. Dai, B. Zhao, and Y. Wang
+    (2025)
+    ↑
+
+    ReXMoE: Reusing experts with minimal overhead in mixture-of-experts.
+    arXiv preprint arXiv:2510.17483. Cited by: §2 <https://arxiv.org/
+    html/2601.21582v1#S2.p1.1>.
+  * S. Toshniwal, W. Du, I. Moshkov, B. Kisacanin, A. Ayrapetyan, and I.
+    Gitman (2025)
+    ↑
+
+    OpenMathInstruct-2: Accelerating AI for math with massive open-
+    source instruction data. In The Thirteenth International Conference
+    on Learning Representations, Cited by: Table 4 <https://arxiv.org/
+    html/2601.21582v1#A1.T4.4.13.12.2>.
+  * A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N.
+    Gomez, Ł. Kaiser, and I. Polosukhin (2017)
+    ↑
+
+    Attention is all you need. Advances in neural information processing
+    systems. Cited by: §3.2 <https://arxiv.org/
+    html/2601.21582v1#S3.SS2.p1.6>, §3.2 <https://arxiv.org/
+    html/2601.21582v1#S3.SS2.p1.8>.
+  * G. Wang, J. Li, Y. Sun, X. Chen, C. Liu, Y. Wu, M. Lu, S. Song, and
+    Y. A. Yadkori (2025a)
+    ↑
+
+    Hierarchical reasoning model. arXiv preprint arXiv:2506.21734. Cited
+    by: §2 <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+  * H. Wang, Y. Fan, M. F. Naeem, Y. Xian, J. E. Lenssen, L. Wang, F.
+    Tombari, and B. Schiele (2025b)
+    ↑
+
+    TokenFormer: Rethinking transformer scaling with tokenized model
+    parameters. In The Thirteenth International Conference on Learning
+    Representations, Cited by: §5 <https://arxiv.org/
+    html/2601.21582v1#S5.p5.1>.
+  * B. Wu, M. Chen, X. Luo, S. Yan, Q. Yu, F. Xia, T. Zhang, H. Zhan, Z.
+    Zhong, X. Zhou, et al. (2025)
+    ↑
+
+    Parallel loop transformer for efficient test-time computation
+    scaling. arXiv preprint arXiv:2510.24824. Cited by: §2 <https://
+    arxiv.org/html/2601.21582v1#S2.p1.1>.
+  * D. Xiao, Q. Meng, S. Li, and X. Yuan (2025)
+    ↑
+
+    MUDDFormer: Breaking residual bottlenecks in transformers via
+    multiway dynamic dense connections. In Forty-Second International
+    Conference on Machine Learning, Cited by: §2 <https://arxiv.org/
+    html/2601.21582v1#S2.p3.1>.
+  * W. Yuan, J. Yu, S. Jiang, K. Padthe, Y. Li, I. Kulikov, K. Cho, D.
+    Wang, Y. Tian, J. E. Weston, et al. (2025)
+    ↑
+
+    Naturalreasoning: Reasoning in the wild with 2.8 m challenging
+    questions. arXiv preprint arXiv:2502.13124. Cited by: Table 4
+    <https://arxiv.org/html/2601.21582v1#A1.T4.4.12.11.2>.
+  * X. Yue, X. Qu, G. Zhang, Y. Fu, W. Huang, H. Sun, Y. Su, and W. Chen
+    (2024)
+    ↑
+
+    MAmmoTH: Building math generalist models through hybrid instruction
+    tuning. In The Twelfth International Conference on Learning
+    Representations, Cited by: Table 4 <https://arxiv.org/
+    html/2601.21582v1#A1.T4.4.7.6.2>.
+  * B. Zhang and R. Sennrich (2019)
+    ↑
+
+    Root mean square layer normalization. In Advances in Neural
+    Information Processing Systems, Cited by: §3.3 <https://arxiv.org/
+    html/2601.21582v1#S3.SS3.p1.8>.
+  * H. Zhu, S. Hao, Z. Hu, J. Jiao, S. Russell, and Y. Tian (2025a)
+    ↑
+
+    Reasoning by superposition: a theoretical perspective on chain of
+    continuous thought. arXiv preprint arXiv:2505.12514. Cited by: §1
+    <https://arxiv.org/html/2601.21582v1#S1.p2.1>.
+  * R. Zhu, Z. Wang, K. Hua, T. Zhang, Z. Li, H. Que, B. Wei, Z. Wen, F.
+    Yin, H. Xing, et al. (2025b)
+    ↑
+
+    Scaling latent reasoning via looped language models. arXiv preprint
+    arXiv:2510.25741. Cited by: §2 <https://arxiv.org/
+    html/2601.21582v1#S2.p1.1>.
+
+
+    Appendix A Experiment Details
+
+Report issue for preceding element
+Table 3: Hyperparameters.
+
+Model (Depth) 	LA (16) 	LA (32) 	DR (16) 	DR (32) 	DR+DA (16) 	DR+DA (32)
+number of layers 	16 	32 	1 	1 	1 	1
+number of DR iterations 	1 	1 	16 	32 	16 	32
+EA expert intermediate size 	512 	512 	504 	504 	480 	472
+EA number of experts 	32 	32 	517 	1039 	537 	1097
+EA number of active experts 	8
+EA bias update rate 	1e-3
+EA query/key size 	128
+EA expert activation function 	SwiGLU\operatorname{SwiGLU}(Shazeer, 2020 <https://arxiv.org/html/2601.21582v1#bib.bib35>)
+SA number of query heads 	16
+SA number of key/value heads 	8
+SA query/key/value size 	128
+SA context length 	4096
+SA RoPE base 	10000
+DA number of query heads 	1
+DA number of key/value heads 	1
+DA query/key/value size 	128
+DA context length 	= depth
+DA RoPE base 	500
+SA/DA MoE number of experts 	= depth
+SA/DA MoE number of active experts 	1
+SA/DA MoE bias update rate 	1e-2
+hidden size hh 	1024
+default weight initialization 	∼𝒩​(0,1/(5⋅h))\sim\!\mathcal{N}(0,
+\sqrt{1/(5\cdot h)})(Nguyen and Salazar, 2019 <https://arxiv.org/html/2601.21582v1#bib.bib36>)
+out-proj weight initialization 	∼𝒩​(0,1/(2.5⋅h⋅depth⋅attn_dims))\sim\!
+\mathcal{N}(0,\sqrt{1/(2.5\cdot h\cdot\text{depth}\cdot\text{attn\_dims})})
+	     (adapted from Nguyen and Salazar (2019 <https://arxiv.org/html/2601.21582v1#bib.bib36>))
+	     with attn_dims = {3​ if DA,2​ else}\{3\text{ if DA},2\text{ else}\}
+tokenizer 	Llama 3.3 70B Instruct <https://huggingface.co/meta-llama/
+Llama-3.3-70B-Instruct>
+optimizer 	AdamW (Kingma and Ba, 2015 <https://arxiv.org/html/2601.21582v1#bib.bib37>; Loshchilov and Hutter, 2019 <https://arxiv.org/html/2601.21582v1#bib.bib38>)
+	     with β\beta= (0.9, 0.999), ϵ\epsilon= 1e-8
+max. learning rate 	4e-4
+learning rate schedule 	constant after linear warmup
+learning rate linear warmup steps 	500
+weight decay 	1e-3
+max. gradient norm (clipped) 	0.5
+batch size 	2202^{20}tokens
+dtype 	bfloat16 					
+
+Report issue for preceding element
+Table 4: Training datasets.
+
+Dataset 	Citation 	License
+EleutherAI/hendrycks_math <https://huggingface.co/datasets/EleutherAI/
+hendrycks_math> 	(Hendryckset al., 2021b <https://arxiv.org/html/2601.21582v1#bib.bib31>) 	MIT <https://choosealicense.com/licenses/mit/>
+bethgelab/CuratedThoughts <https://huggingface.co/datasets/bethgelab/
+CuratedThoughts> 	(Hochlehnertet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib39>) 	-
+     (OpenR1-Math-220k-default, 		
+     OpenThoughts-114k-math-default) 		
+microsoft/orca-math-word-problems-200k <https://huggingface.co/datasets/
+microsoft/orca-math-word-problems-200k> 	(Mitraet al., 2024 <https://arxiv.org/html/2601.21582v1#bib.bib40>) 	MIT <https://choosealicense.com/licenses/mit/>
+TIGER-Lab/MathInstruct <https://huggingface.co/datasets/TIGER-Lab/
+MathInstruct> 	(Yueet al., 2024 <https://arxiv.org/html/2601.21582v1#bib.bib41>) 	MIT <https://choosealicense.com/licenses/mit/>
+openai/gsm8k <https://huggingface.co/datasets/openai/gsm8k> 	(Cobbeet al., 2021 <https://arxiv.org/html/2601.21582v1#bib.bib30>) 	MIT <https://choosealicense.com/licenses/mit/>
+XinyaoHu/AMPS_khan <https://huggingface.co/datasets/XinyaoHu/AMPS_khan>
+	XinyaoHu/AMPS_khan <https://huggingface.co/datasets/XinyaoHu/AMPS_khan>
+	MIT <https://choosealicense.com/licenses/mit/>
+open-thoughts/OpenThoughts2-1M <https://huggingface.co/datasets/open-
+thoughts/OpenThoughts2-1M> 	(Guhaet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib42>) 	Apache 2.0 <https://choosealicense.com/licenses/apache-2.0/>
+AI-MO/NuminaMath-CoT <https://huggingface.co/datasets/AI-MO/NuminaMath-
+CoT> 	(LIet al., 2024 <https://arxiv.org/html/2601.21582v1#bib.bib43>) 	Apache 2.0 <https://choosealicense.com/licenses/apache-2.0/>
+facebook/natural_reasoning <https://huggingface.co/datasets/facebook/
+natural_reasoning> 	(Yuanet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib44>) 	CC-BY-NC-4.0 <https://spdx.org/licenses/CC-BY-NC-4.0>
+nvidia/OpenMathInstruct-2 <https://huggingface.co/datasets/nvidia/
+OpenMathInstruct-2> 	(Toshniwalet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib45>) 	CC-BY-4.0 <https://choosealicense.com/licenses/cc-by-4.0/>
+nvidia/OpenMathReasoning <https://huggingface.co/datasets/nvidia/
+OpenMathReasoning>(cot) 	(Moshkovet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib46>) 	CC-BY-4.0 <https://choosealicense.com/licenses/cc-by-4.0/>
+zwhe99/DeepMath-103K <https://huggingface.co/datasets/zwhe99/
+DeepMath-103K> 	(Heet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib47>) 	MIT <https://choosealicense.com/licenses/mit/>
+ibivibiv/math_instruct <https://huggingface.co/datasets/ibivibiv/
+math_instruct> 	ibivibiv/math_instruct <https://huggingface.co/datasets/
+ibivibiv/math_instruct> 	-
+nvidia/Nemotron-Pretraining-SFT-v1 <https://huggingface.co/datasets/
+nvidia/Nemotron-Pretraining-SFT-v1> 	(Basantet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib48>) 	NVIDIA Data Agreement      for Model Training <https://
+huggingface.co/datasets/nvidia/Nemotron-Pretraining-SFT-v1/blob/main/
+LICENSE.md>
+     (Nemotron-SFT-MATH) 	
+ajibawa-2023/Maths-College <https://huggingface.co/datasets/
+ajibawa-2023/Maths-College> 	ajibawa-2023/Maths-College <https://
+huggingface.co/datasets/ajibawa-2023/Maths-College> 	Apache 2.0
+<https://choosealicense.com/licenses/apache-2.0/>
+
+Report issue for preceding element
+
+
+    Appendix B Further Analysis
+
+Report issue for preceding element
+
+In addition to Figure 5 <https://arxiv.org/html/2601.21582v1#S4.F5>,
+which shows P​(depth|expert)P(\text{depth}|\text{expert}) for EA, we
+show P​(expert|depth)P(\text{expert}|\text{depth}) in Figure 7 <https://
+arxiv.org/html/2601.21582v1#A2.F7>. The method for ordering the experts
+remains the same.
+
+Report issue for preceding element
+
+Refer to caption
+
+Report issue for preceding element
+Figure 7: Distribution of experts per depth. Experts are sorted by the
+number of depths in their top 90th percentile of sorted P​(depth|
+expert)P(\text{depth}|\text{expert}), as a measure of depth-
+generalization. Within these groups, experts are sorted by sampled depth
+from their distributions. Observations: Higher depths tend to use more
+depth-specialized experts. However, there are some exceptions, like the
+second to last depth, which also use some specific depth-generalized
+experts.
+
+Report issue for preceding element
+
+Report Issue
+
+
+          Report GitHub Issue
+
+Title:
+
+Content selection saved. Describe the issue below:
+Description:
+
+Submit without GitHub
+
+Submit in GitHub
+
+Report Issue for Selection
+Generated by L A T E xml [LOGO] <https://math.nist.gov/~BMiller/LaTeXML/>
+
+
+    Instructions for reporting errors
+
+We are continuing to improve HTML versions of papers, and your feedback
+helps enhance accessibility and mobile support. To report errors in the
+HTML that will help us improve conversion and rendering, choose any of
+the methods listed below:
+
+  * Click the "Report Issue" button.
+  * Open a report feedback form via keyboard, use "*Ctrl + ?*".
+  * Make a text selection and click the "Report Issue for Selection"
+    button near your cursor.
+  * You can use Alt+Y to toggle on and Alt+Shift+Y to toggle off
+    accessible reporting links at each section.
+
+Our team has already identified the following issues <https://
+github.com/arXiv/html_feedback/issues>. We appreciate your time
+reviewing and reporting rendering errors we may not have found yet. Your
+efforts will help us improve the HTML versions for all readers, because
+disability should not be a barrier to accessing research. Thank you for
+your continued support in championing open access for all.
+
+Have a free development cycle? Help support accessibility at arXiv! Our
+collaborators at LaTeXML maintain a list of packages that need
+conversion <https://github.com/brucemiller/LaTeXML/wiki/Porting-LaTeX-
+packages-for-LaTeXML>, and welcome developer contributions <https://
+github.com/brucemiller/LaTeXML/issues>.
+

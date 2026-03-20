@@ -36,7 +36,7 @@ from wandb_utils import finish_wandb, hyperparameters_to_config, init_wandb, log
 # -----------------------------
 # Default Simple Baseline run:
 # - 1 shared depth-recurrent transformer block at width 512
-# - 8 attention heads with 4 KV heads (GQA), depth attention, and 2x MLP expansion
+# - 8 attention heads with 4 KV heads (GQA), depth attention, and expert attention
 # - vocab size 1024, sequence length 1024, tied embeddings
 # - 524,288 train tokens per step for 20,000 iterations with a ~10 minute cap
 
@@ -74,6 +74,8 @@ class Hyperparameters:
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
     mlp_mult = int(os.environ.get("MLP_MULT", 2))
+    num_experts = int(os.environ.get("NUM_EXPERTS", 8))
+    num_active_experts = int(os.environ.get("NUM_ACTIVE_EXPERTS", 2))
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
@@ -333,7 +335,7 @@ CONTROL_TENSOR_NAME_PATTERNS = tuple(
     pattern
     for pattern in os.environ.get(
         "CONTROL_TENSOR_NAME_PATTERNS",
-        "attn_scale,attn_scales,depth_attn_scale,depth_attn_scales,mlp_scale,mlp_scales,q_gain,skip_weight,skip_weights",
+        "attn_scale,attn_scales,depth_attn_scale,depth_attn_scales,expert_scale,expert_scales,q_gain,skip_weight,skip_weights",
     ).split(",")
     if pattern
 )
@@ -830,6 +832,124 @@ class MLP(nn.Module):
         return self.proj(x.square())
 
 
+class ExpertMLP(nn.Module):
+    def __init__(self, dim: int, mlp_mult: int):
+        super().__init__()
+        hidden = mlp_mult * dim
+        self.fc = CastedLinear(dim, hidden, bias=False)
+        self.proj = CastedLinear(hidden, dim, bias=False)
+        self.proj._zero_init = True
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = torch.relu(self.fc(x))
+        return self.proj(x.square())
+
+
+class ExpertAttention(nn.Module):
+    depth_cos: Tensor
+    depth_sin: Tensor
+    depth_rev_cos: Tensor
+    depth_rev_sin: Tensor
+
+    def __init__(
+        self,
+        dim: int,
+        mlp_mult: int,
+        num_experts: int,
+        num_active_experts: int,
+        max_depth: int,
+        rope_base: float,
+    ):
+        super().__init__()
+        if num_experts <= 0:
+            raise ValueError(f"num_experts must be positive, got {num_experts}")
+        if num_active_experts <= 0:
+            raise ValueError(
+                f"num_active_experts must be positive, got {num_active_experts}"
+            )
+        if num_active_experts > num_experts:
+            raise ValueError(
+                f"num_active_experts={num_active_experts} exceeds num_experts={num_experts}"
+            )
+        if dim % 2 != 0:
+            raise ValueError("model_dim must be even for expert-attention RoPE")
+        self.dim = dim
+        self.num_experts = num_experts
+        self.num_active_experts = num_active_experts
+        self.router = CastedLinear(dim, dim, bias=False)
+        self.expert_keys = nn.Parameter(torch.empty(num_experts, dim, dtype=torch.float32))
+        self.experts = nn.ModuleList(
+            [ExpertMLP(dim, mlp_mult) for _ in range(num_experts)]
+        )
+
+        inv_freq = 1.0 / (
+            rope_base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim)
+        )
+        depth_positions = torch.arange(max_depth, dtype=torch.float32)
+        reverse_positions = torch.arange(max_depth - 1, -1, -1, dtype=torch.float32)
+        forward_freqs = torch.outer(depth_positions, inv_freq)
+        reverse_freqs = torch.outer(reverse_positions, inv_freq)
+        self.register_buffer(
+            "depth_cos", forward_freqs.cos(), persistent=False
+        )
+        self.register_buffer(
+            "depth_sin", forward_freqs.sin(), persistent=False
+        )
+        self.register_buffer(
+            "depth_rev_cos", reverse_freqs.cos(), persistent=False
+        )
+        self.register_buffer(
+            "depth_rev_sin", reverse_freqs.sin(), persistent=False
+        )
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        bound = 1.0 / math.sqrt(self.dim)
+        with torch.no_grad():
+            self.expert_keys.uniform_(-bound, bound)
+
+    def _apply_depth_rope(self, q: Tensor, depth_idx: int) -> Tensor:
+        half = self.dim // 2
+        q1, q2 = q[..., :half], q[..., half:]
+        q_cos = self.depth_cos[depth_idx : depth_idx + 1, :].to(
+            device=q.device, dtype=q.dtype
+        )
+        q_sin = self.depth_sin[depth_idx : depth_idx + 1, :].to(
+            device=q.device, dtype=q.dtype
+        )
+        rq_cos = self.depth_rev_cos[depth_idx : depth_idx + 1, :].to(
+            device=q.device, dtype=q.dtype
+        )
+        rq_sin = self.depth_rev_sin[depth_idx : depth_idx + 1, :].to(
+            device=q.device, dtype=q.dtype
+        )
+        return torch.cat(
+            (q1 * q_cos + q2 * q_sin, q1 * (-rq_sin) + q2 * rq_cos), dim=-1
+        )
+
+    def forward(self, x: Tensor, depth_idx: int) -> Tensor:
+        bsz, seqlen, dim = x.shape
+        flat_x = x.reshape(bsz * seqlen, dim)
+        q = self.router(flat_x)
+        q = F.rms_norm(q, (q.size(-1),))
+        q = self._apply_depth_rope(q, depth_idx)
+        logits = (q @ self.expert_keys.to(dtype=q.dtype).T) / math.sqrt(dim)
+        gate_values = torch.sigmoid(logits)
+        _, topk_idx = torch.topk(logits, k=self.num_active_experts, dim=-1)
+        topk_gates = gate_values.gather(-1, topk_idx)
+        topk_gates = topk_gates / topk_gates.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+        gates = torch.zeros_like(gate_values)
+        gates.scatter_(-1, topk_idx, topk_gates)
+
+        expert_outputs = torch.stack(
+            [expert(flat_x) for expert in self.experts], dim=1
+        )
+        y = (expert_outputs * gates.to(dtype=expert_outputs.dtype).unsqueeze(-1)).sum(
+            dim=1
+        )
+        return y.reshape(bsz, seqlen, dim)
+
+
 class Block(nn.Module):
     def __init__(
         self,
@@ -837,6 +957,8 @@ class Block(nn.Module):
         num_heads: int,
         num_kv_heads: int,
         mlp_mult: int,
+        num_experts: int,
+        num_active_experts: int,
         max_seq_len: int,
         max_depth: int,
         rope_base: float,
@@ -852,10 +974,12 @@ class Block(nn.Module):
         self.depth_attn = DepthSelfAttention(
             dim, num_heads, num_kv_heads, max_depth, rope_base, qk_gain_init
         )
-        self.mlp = MLP(dim, mlp_mult)
+        self.expert_attn = ExpertAttention(
+            dim, mlp_mult, num_experts, num_active_experts, max_depth, rope_base
+        )
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.depth_attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
-        self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
+        self.expert_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
 
     def forward(
         self, x: Tensor, depth_history: list[Tensor], q_delta_fn=None, v_delta_fn=None
@@ -872,8 +996,8 @@ class Block(nn.Module):
             + self.depth_attn_scale.to(dtype=x.dtype)[None, None, :]
             * depth_attn_out
         )
-        x = x + self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(
-            self.mlp_norm(x)
+        x = x + self.expert_scale.to(dtype=x.dtype)[None, None, :] * self.expert_attn(
+            self.mlp_norm(x), len(depth_history)
         )
         return F.rms_norm(x, (x.size(-1),)), [*depth_history, depth_in]
 
@@ -887,6 +1011,8 @@ class RecursiveGPT(nn.Module):
         num_heads: int,
         num_kv_heads: int,
         mlp_mult: int,
+        num_experts: int,
+        num_active_experts: int,
         tie_embeddings: bool,
         tied_embed_init_std: float,
         logit_softcap: float,
@@ -915,6 +1041,8 @@ class RecursiveGPT(nn.Module):
                     num_heads,
                     num_kv_heads,
                     mlp_mult,
+                    num_experts,
+                    num_active_experts,
                     max_seq_len,
                     num_recurrent_steps,
                     rope_base,
@@ -1401,6 +1529,8 @@ def main() -> None:
             num_heads=args.num_heads,
             num_kv_heads=args.num_kv_heads,
             mlp_mult=args.mlp_mult,
+            num_experts=args.num_experts,
+            num_active_experts=args.num_active_experts,
             tie_embeddings=args.tie_embeddings,
             tied_embed_init_std=args.tied_embed_init_std,
             logit_softcap=args.logit_softcap,
@@ -1494,6 +1624,10 @@ def main() -> None:
     log0("sdp_backends:cudnn=False flash=True mem_efficient=False math=False")
     log0(
         f"attention_mode:gqa num_heads:{args.num_heads} num_kv_heads:{args.num_kv_heads}"
+    )
+    log0(
+        f"expert_attention:num_experts:{args.num_experts} "
+        f"num_active_experts:{args.num_active_experts} expert_hidden_mult:{args.mlp_mult}"
     )
     log0(
         f"tie_embeddings:{args.tie_embeddings} embed_lr:{token_lr} "
