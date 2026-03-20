@@ -76,7 +76,6 @@ class Hyperparameters:
     N_sup = int(os.environ.get("RECURSE_N_SUP", 4))
     T = int(os.environ.get("RECURSE_T", 2))
     n = int(os.environ.get("RECURSE_N", 2))
-
     # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
     head_lr = float(os.environ.get("HEAD_LR", 0.008))
@@ -1541,17 +1540,14 @@ def main() -> None:
             )
             for _ in range(grad_accum_steps)
         ]
-        batch_states: list[tuple[Tensor, Tensor] | None] = [None] * grad_accum_steps
-        for _ in range(args.N_sup):
-            train_loss = torch.zeros((), device=device)
-            for micro_step in range(grad_accum_steps):
-                if distributed:
-                    assert ddp_model is not None
-                    ddp_model.require_backward_grad_sync = (
-                        micro_step == grad_accum_steps - 1
-                    )
-                x, y_true = batch_xy[micro_step]
-                yz_state = batch_states[micro_step]
+        train_loss = torch.zeros((), device=device)
+        for micro_step in range(grad_accum_steps):
+            if distributed:
+                assert ddp_model is not None
+                ddp_model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
+            x, y_true = batch_xy[micro_step]
+            yz_state: tuple[Tensor, Tensor] | None = None
+            for _ in range(args.N_sup):
                 with torch.autocast(
                     device_type="cuda", dtype=torch.bfloat16, enabled=True
                 ):
@@ -1562,33 +1558,33 @@ def main() -> None:
                             x, yz_state[0], yz_state[1], return_state=True
                         )
                     loss = loss_fn(logits, y_true)
-                batch_states[micro_step] = (y_state, z_state)
+                yz_state = (y_state, z_state)
                 train_loss += loss.detach()
-                (loss * grad_scale).backward()
-            train_loss /= grad_accum_steps
+                (loss * (grad_scale / args.N_sup)).backward()
+        train_loss /= grad_accum_steps * args.N_sup
 
-            frac = (
-                min(step / args.muon_momentum_warmup_steps, 1.0)
-                if args.muon_momentum_warmup_steps > 0
-                else 1.0
+        frac = (
+            min(step / args.muon_momentum_warmup_steps, 1.0)
+            if args.muon_momentum_warmup_steps > 0
+            else 1.0
+        )
+        muon_momentum = (
+            1 - frac
+        ) * args.muon_momentum_warmup_start + frac * args.muon_momentum
+        for group in optimizer_muon.param_groups:
+            group["momentum"] = muon_momentum
+
+        for opt in optimizers:
+            for group in opt.param_groups:
+                group["lr"] = group["base_lr"] * scale
+
+        if args.grad_clip_norm > 0:
+            torch.nn.utils.clip_grad_norm_(
+                base_model.parameters(), args.grad_clip_norm
             )
-            muon_momentum = (
-                1 - frac
-            ) * args.muon_momentum_warmup_start + frac * args.muon_momentum
-            for group in optimizer_muon.param_groups:
-                group["momentum"] = muon_momentum
-
-            for opt in optimizers:
-                for group in opt.param_groups:
-                    group["lr"] = group["base_lr"] * scale
-
-            if args.grad_clip_norm > 0:
-                torch.nn.utils.clip_grad_norm_(
-                    base_model.parameters(), args.grad_clip_norm
-                )
-            for opt in optimizers:
-                opt.step()
-            zero_grad_all()
+        for opt in optimizers:
+            opt.step()
+        zero_grad_all()
 
         step += 1
         approx_training_time_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
