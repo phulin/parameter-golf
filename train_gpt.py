@@ -899,6 +899,7 @@ class ExpertAttention(nn.Module):
         self.experts = nn.ModuleList(
             [ExpertMLP(dim, mlp_mult) for _ in range(num_experts)]
         )
+        self.shared_expert = ExpertMLP(dim, mlp_mult)
 
         inv_freq = 1.0 / (
             rope_base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim)
@@ -964,6 +965,8 @@ class ExpertAttention(nn.Module):
         y = (expert_outputs * gates.to(dtype=expert_outputs.dtype).unsqueeze(-1)).sum(
             dim=1
         )
+        max_gate = gate_values.max(dim=-1, keepdim=True).values.detach()
+        y = y + max_gate.to(dtype=y.dtype) * self.shared_expert(flat_x)
         return y.reshape(bsz, seqlen, dim)
 
 
