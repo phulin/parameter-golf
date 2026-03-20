@@ -1217,7 +1217,7 @@ def _reset_ttt_optimizer(opt):
 
 
 def _build_ttt_optimizer(lora, args: Hyperparameters):
-    return torch.optim.Adam(
+    return torch.optim.AdamW(
         lora.parameters(),
         lr=args.ttt_lora_lr,
         betas=(args.beta1, args.beta2),
@@ -1595,10 +1595,11 @@ def main() -> None:
         or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
     ]
     token_lr = args.tied_embed_lr if args.tie_embeddings else args.embed_lr
-    optimizer_tok = torch.optim.Adam(
+    optimizer_tok = torch.optim.AdamW(
         [{"params": [base_model.tok_emb.weight], "lr": token_lr, "base_lr": token_lr}],
         betas=(args.beta1, args.beta2),
         eps=args.adam_eps,
+        weight_decay=1e-3,
         fused=True,
     )
     optimizer_muon = Muon(
@@ -1609,10 +1610,11 @@ def main() -> None:
     )
     for group in optimizer_muon.param_groups:
         group["base_lr"] = args.matrix_lr
-    optimizer_scalar = torch.optim.Adam(
+    optimizer_scalar = torch.optim.AdamW(
         [{"params": scalar_params, "lr": args.scalar_lr, "base_lr": args.scalar_lr}],
         betas=(args.beta1, args.beta2),
         eps=args.adam_eps,
+        weight_decay=1e-3,
         fused=True,
     )
     optimizers: list[torch.optim.Optimizer] = [
@@ -1621,7 +1623,7 @@ def main() -> None:
         optimizer_scalar,
     ]
     if base_model.lm_head is not None:
-        optimizer_head = torch.optim.Adam(
+        optimizer_head = torch.optim.AdamW(
             [
                 {
                     "params": [base_model.lm_head.weight],
