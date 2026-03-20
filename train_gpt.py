@@ -73,9 +73,6 @@ class Hyperparameters:
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
-    N_sup = int(os.environ.get("RECURSE_N_SUP", 4))
-    T = int(os.environ.get("RECURSE_T", 2))
-    n = int(os.environ.get("RECURSE_N", 2))
     # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
     head_lr = float(os.environ.get("HEAD_LR", 0.008))
@@ -774,8 +771,6 @@ class RecursiveGPT(nn.Module):
         logit_softcap: float,
         rope_base: float,
         qk_gain_init: float,
-        T: int,
-        n: int,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -783,8 +778,7 @@ class RecursiveGPT(nn.Module):
         self.tie_embeddings = tie_embeddings
         self.tied_embed_init_std = tied_embed_init_std
         self.logit_softcap = logit_softcap
-        self.T = T
-        self.n = n
+        self.num_recurrent_steps = 3
         self.tok_emb = nn.Embedding(vocab_size, model_dim)
         self.num_encoder_layers = num_layers // 2
         self.num_decoder_layers = num_layers - self.num_encoder_layers
@@ -843,34 +837,7 @@ class RecursiveGPT(nn.Module):
 
         return x
 
-    def latent_recursion(self, x, y, z, lora=None):
-        for _ in range(self.n):
-            z = self.encoder_decoder(x + y + z, lora)
-        y = self.encoder_decoder(y + z)
-        return y, z
-
-    def deep_recursion(self, x, y, z, lora=None):
-        with torch.no_grad():
-            for _ in range(self.T - 1):
-                y, z = self.latent_recursion(x, y, z, lora)
-        y, z = self.latent_recursion(x, y, z, lora)
-        return y, z
-
-    def forward(
-        self,
-        input_ids: Tensor,
-        y: Tensor | None = None,
-        z: Tensor | None = None,
-        lora=None,
-        return_state: bool = False,
-    ) -> Tensor | tuple[Tensor, Tensor, Tensor]:
-        x = self.tok_emb(input_ids)
-        x = F.rms_norm(x, (x.size(-1),))
-        if y is None:
-            y = torch.zeros_like(x)
-        if z is None:
-            z = torch.zeros_like(x)
-        y, z = self.deep_recursion(x, y, z, lora)
+    def _compute_logits(self, y: Tensor, lora=None) -> Tensor:
         y = self.final_norm(y)
         if self.tie_embeddings:
             logits = F.linear(y, self.tok_emb.weight)
@@ -878,9 +845,33 @@ class RecursiveGPT(nn.Module):
             assert self.lm_head is not None
             logits = self.lm_head(y)
         logits = logits + (lora.lm_head_lora(y) if lora else 0)
-        logits = self.logit_softcap * torch.tanh(logits / self.logit_softcap)
+        return self.logit_softcap * torch.tanh(logits / self.logit_softcap)
+
+    def recurrent_steps(
+        self, input_ids: Tensor, y: Tensor | None = None, lora=None
+    ) -> tuple[list[Tensor], Tensor]:
+        x = self.tok_emb(input_ids)
+        x = F.rms_norm(x, (x.size(-1),))
+        if y is None:
+            y = torch.zeros_like(x)
+
+        step_logits: list[Tensor] = []
+        for _ in range(self.num_recurrent_steps):
+            y = self.encoder_decoder(x + y, lora)
+            step_logits.append(self._compute_logits(y, lora))
+        return step_logits, y
+
+    def forward(
+        self,
+        input_ids: Tensor,
+        y: Tensor | None = None,
+        lora=None,
+        return_state: bool = False,
+    ) -> Tensor | tuple[Tensor, Tensor]:
+        step_logits, y = self.recurrent_steps(input_ids, y, lora)
+        logits = step_logits[-1]
         if return_state:
-            return logits, y.detach(), z.detach()
+            return logits, y.detach()
         return logits
 
 
@@ -1298,8 +1289,6 @@ def main() -> None:
             logit_softcap=args.logit_softcap,
             rope_base=args.rope_base,
             qk_gain_init=args.qk_gain_init,
-            T=args.T,
-            n=args.n,
         )
         .to(device)
         .bfloat16()
@@ -1320,6 +1309,9 @@ def main() -> None:
         else compiled_model
     )
     ddp_model = cast(DDP | None, model if distributed else None)
+    train_model = cast(
+        RecursiveGPT, ddp_model.module if ddp_model is not None else model
+    )
 
     # Optimizer split:
     # - token embedding (Adam) uses EMBED_LR
@@ -1459,8 +1451,10 @@ def main() -> None:
                 with torch.autocast(
                     device_type="cuda", dtype=torch.bfloat16, enabled=True
                 ):
-                    warmup_logits = model(x)
-                    warmup_loss = loss_fn(warmup_logits, y)
+                    warmup_step_logits, _ = train_model.recurrent_steps(x)
+                    warmup_loss = sum(
+                        loss_fn(step_logits, y) for step_logits in warmup_step_logits
+                    ) / len(warmup_step_logits)
                 (warmup_loss * grad_scale).backward()
             for opt in optimizers:
                 opt.step()
@@ -1503,7 +1497,9 @@ def main() -> None:
         if should_validate:
             if last_step:
                 if stop_after_step is not None and step < args.iterations:
-                    log0(f"finalizing: reached wallclock cap, running final validation at step:{step}")
+                    log0(
+                        f"finalizing: reached wallclock cap, running final validation at step:{step}"
+                    )
                 else:
                     log0(f"finalizing: running terminal validation at step:{step}")
             torch.cuda.synchronize()
@@ -1549,24 +1545,18 @@ def main() -> None:
         for micro_step in range(grad_accum_steps):
             if distributed:
                 assert ddp_model is not None
-                ddp_model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
+                ddp_model.require_backward_grad_sync = (
+                    micro_step == grad_accum_steps - 1
+                )
             x, y_true = batch_xy[micro_step]
-            yz_state: tuple[Tensor, Tensor] | None = None
-            for _ in range(args.N_sup):
-                with torch.autocast(
-                    device_type="cuda", dtype=torch.bfloat16, enabled=True
-                ):
-                    if yz_state is None:
-                        logits, y_state, z_state = model(x, return_state=True)
-                    else:
-                        logits, y_state, z_state = model(
-                            x, yz_state[0], yz_state[1], return_state=True
-                        )
-                    loss = loss_fn(logits, y_true)
-                yz_state = (y_state, z_state)
-                train_loss += loss.detach()
-                (loss * (grad_scale / args.N_sup)).backward()
-        train_loss /= grad_accum_steps * args.N_sup
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+                step_logits, _ = train_model.recurrent_steps(x)
+                loss = sum(loss_fn(logits, y_true) for logits in step_logits) / len(
+                    step_logits
+                )
+            train_loss += loss.detach()
+            (loss * grad_scale).backward()
+        train_loss /= grad_accum_steps
 
         frac = (
             min(step / args.muon_momentum_warmup_steps, 1.0)
@@ -1584,9 +1574,7 @@ def main() -> None:
                 group["lr"] = group["base_lr"] * scale
 
         if args.grad_clip_norm > 0:
-            torch.nn.utils.clip_grad_norm_(
-                base_model.parameters(), args.grad_clip_norm
-            )
+            torch.nn.utils.clip_grad_norm_(base_model.parameters(), args.grad_clip_norm)
         for opt in optimizers:
             opt.step()
         zero_grad_all()
