@@ -1501,6 +1501,11 @@ def main() -> None:
             args.val_loss_every > 0 and step % args.val_loss_every == 0
         )
         if should_validate:
+            if last_step:
+                if stop_after_step is not None and step < args.iterations:
+                    log0(f"finalizing: reached wallclock cap, running final validation at step:{step}")
+                else:
+                    log0(f"finalizing: running terminal validation at step:{step}")
             torch.cuda.synchronize()
             training_time_ms += 1000.0 * (time.perf_counter() - t0)
             val_loss, val_bpb = eval_val(
@@ -1609,6 +1614,10 @@ def main() -> None:
             reached_cap = bool(reached_cap_tensor.item())
         if stop_after_step is None and reached_cap:
             stop_after_step = step
+            log0(
+                f"wallclock_cap_reached: step:{step} "
+                f"train_time:{approx_training_time_ms:.0f}ms entering finalization"
+            )
 
     log0(
         f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
@@ -1622,6 +1631,7 @@ def main() -> None:
     # the compressed int8+zlib artifact and validate the round-tripped weights.
 
     if master_process:
+        log0("finalizing: serializing raw model")
         torch.save(base_model.state_dict(), "final_model.pt")
         model_bytes = os.path.getsize("final_model.pt")
         code_bytes = len(code.encode("utf-8"))
@@ -1636,6 +1646,7 @@ def main() -> None:
     quant_blob = zlib.compress(quant_raw, level=9)
     quant_raw_bytes = len(quant_raw)
     if master_process:
+        log0("finalizing: writing int8+zlib artifact")
         with open("final_model.int8.ptz", "wb") as f:
             f.write(quant_blob)
         quant_file_bytes = os.path.getsize("final_model.int8.ptz")
@@ -1658,6 +1669,7 @@ def main() -> None:
     )
     base_model.load_state_dict(dequantize_state_dict_int8(quant_state), strict=True)
     torch.cuda.synchronize()
+    log0("finalizing: running int8 roundtrip validation")
     t_qeval = time.perf_counter()
     q_val_loss, q_val_bpb = eval_val(
         args,
@@ -1683,6 +1695,7 @@ def main() -> None:
     # LoRA test-time training evaluation (the competition score)
     torch._dynamo.reset()
     torch.cuda.synchronize()
+    log0("finalizing: running TTT LoRA evaluation")
     t_ttt = time.perf_counter()
     ttt_val_loss, ttt_val_bpb = eval_val_ttt_lora(
         args,
