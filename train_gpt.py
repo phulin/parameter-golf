@@ -943,7 +943,9 @@ class ExpertAttention(nn.Module):
         biased_logits = logits + self.expert_bias.to(dtype=logits.dtype)
         _, topk_idx = torch.topk(biased_logits, k=self.num_active_experts, dim=-1)
         topk_gates = gate_values.gather(-1, topk_idx)
-        topk_gates = topk_gates / topk_gates.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+        topk_gates = (topk_gates / topk_gates.sum(dim=-1, keepdim=True).clamp_min(1e-9)).to(
+            dtype=gate_values.dtype
+        )
         gates = torch.zeros_like(gate_values)
         gates.scatter_(-1, topk_idx, topk_gates)
         if self.training and self.balance_lambda > 0:
