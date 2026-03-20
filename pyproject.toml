@@ -5,10 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "datasets>=4.8.3",
+    "huggingface-hub>=1.7.2",
     "mlx>=0.31.1",
     "numpy>=2.4.3",
     "sentencepiece>=0.2.1",
     "torch>=2.10.0",
+    "tqdm>=4.67.3",
 ]
 
 [dependency-groups]
