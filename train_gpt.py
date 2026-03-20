@@ -73,6 +73,9 @@ class Hyperparameters:
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
+    N_sup = int(os.environ.get("RECURSE_N_SUP", 4))
+    T = int(os.environ.get("RECURSE_T", 2))
+    n = int(os.environ.get("RECURSE_N", 2))
 
     # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
@@ -757,7 +760,7 @@ class Block(nn.Module):
         return x
 
 
-class GPT(nn.Module):
+class RecursiveGPT(nn.Module):
     def __init__(
         self,
         vocab_size: int,
@@ -771,6 +774,8 @@ class GPT(nn.Module):
         logit_softcap: float,
         rope_base: float,
         qk_gain_init: float,
+        T: int,
+        n: int,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -778,6 +783,8 @@ class GPT(nn.Module):
         self.tie_embeddings = tie_embeddings
         self.tied_embed_init_std = tied_embed_init_std
         self.logit_softcap = logit_softcap
+        self.T = T
+        self.n = n
         self.tok_emb = nn.Embedding(vocab_size, model_dim)
         self.num_encoder_layers = num_layers // 2
         self.num_decoder_layers = num_layers - self.num_encoder_layers
@@ -813,12 +820,9 @@ class GPT(nn.Module):
             if isinstance(module, nn.Linear) and getattr(module, "_zero_init", False):
                 nn.init.zeros_(module.weight)
 
-    def forward(self, input_ids: Tensor, target_ids: Tensor, lora=None) -> Tensor:
-        x = self.tok_emb(input_ids)
-        x = F.rms_norm(x, (x.size(-1),))
+    def encoder_decoder(self, x: Tensor, lora=None) -> Tensor:
         x0 = x
         skips: list[Tensor] = []
-
         # First half stores skips; second half reuses them in reverse order.
         for i in range(self.num_encoder_layers):
             qd = lora.q_loras[i] if lora else None
@@ -836,6 +840,31 @@ class GPT(nn.Module):
             qd = lora.q_loras[bi] if lora else None
             vd = lora.v_loras[bi] if lora else None
             x = self.blocks[bi](x, x0, qd, vd)
+
+        return x
+
+    def latent_recursion(self, x, y, z, lora=None):
+        for _ in range(self.n):
+            z = self.encoder_decoder(x + y + z, lora)
+        y = self.encoder_decoder(y + z)
+        return y, z
+
+    def deep_recursion(self, x, y, z, lora=None):
+        with torch.no_grad():
+            for _ in range(self.T - 1):
+                y, z = self.latent_recursion(x, y, z, lora)
+        y, z = self.latent_recursion(x, y, z, lora)
+        return y, z
+
+    def forward(self, input_ids: Tensor, y: Tensor, z: Tensor, lora=None) -> Tensor:
+        x = self.tok_emb(input_ids)
+        x = F.rms_norm(x, (x.size(-1),))
+
+        # TODO: make
+        y = torch.zeros_like(x)
+        z = torch.zeros_like(x)
+        y, z = self.deep_recursion(x, y, z, lora)
+
         x = self.final_norm(x)
         if self.tie_embeddings:
             logits = F.linear(x, self.tok_emb.weight)
@@ -844,16 +873,20 @@ class GPT(nn.Module):
             logits = self.lm_head(x)
         logits = logits + (lora.lm_head_lora(x) if lora else 0)
         logits = self.logit_softcap * torch.tanh(logits / self.logit_softcap)
-        if lora:
-            bsz, sl, V = logits.shape
-            return F.cross_entropy(
-                logits.float().reshape(-1, V), target_ids.reshape(-1), reduction="none"
-            ).reshape(bsz, sl)
+        return logits
+
+
+def loss_fn(logits, target_ids, lora=None):
+    if lora:
+        bsz, sl, V = logits.shape
         return F.cross_entropy(
-            logits.float().reshape(-1, logits.size(-1)),
-            target_ids.reshape(-1),
-            reduction="mean",
-        )
+            logits.float().reshape(-1, V), target_ids.reshape(-1), reduction="none"
+        ).reshape(bsz, sl)
+    return F.cross_entropy(
+        logits.float().reshape(-1, logits.size(-1)),
+        target_ids.reshape(-1),
+        reduction="mean",
+    )
 
 
 # -----------------------------
@@ -890,7 +923,7 @@ class BatchedLinearLoRA(nn.Module):
 class BatchedTTTLoRA(nn.Module):
     """All LoRA adapters for one batch: LM head and Q/V per block."""
 
-    def __init__(self, bsz: int, model: GPT, rank: int):
+    def __init__(self, bsz: int, model: RecursiveGPT, rank: int):
         super().__init__()
         dim = model.tok_emb.embedding_dim
         vocab = model.tok_emb.num_embeddings
@@ -996,7 +1029,7 @@ def _accumulate_bpb(
 
 def eval_val_ttt_lora(
     args: Hyperparameters,
-    base_model: GPT,
+    base_model: RecursiveGPT,
     rank: int,
     world_size: int,
     device: torch.device,
@@ -1245,7 +1278,7 @@ def main() -> None:
     # -----------------------------
 
     base_model = (
-        GPT(
+        RecursiveGPT(
             vocab_size=args.vocab_size,
             num_layers=args.num_layers,
             model_dim=args.model_dim,
@@ -1257,6 +1290,8 @@ def main() -> None:
             logit_softcap=args.logit_softcap,
             rope_base=args.rope_base,
             qk_gain_init=args.qk_gain_init,
+            T=args.T,
+            n=args.n,
         )
         .to(device)
         .bfloat16()
@@ -1416,7 +1451,8 @@ def main() -> None:
                 with torch.autocast(
                     device_type="cuda", dtype=torch.bfloat16, enabled=True
                 ):
-                    warmup_loss = model(x, y)
+                    warmup_logits = model(x)
+                    warmup_loss = loss_fn(warmup_logits, y)
                 (warmup_loss * grad_scale).backward()
             for opt in optimizers:
                 opt.step()
@@ -1489,42 +1525,49 @@ def main() -> None:
         elapsed_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
         scale = lr_mul(step, elapsed_ms)
         zero_grad_all()
-        train_loss = torch.zeros((), device=device)
-        for micro_step in range(grad_accum_steps):
-            if distributed:
-                assert ddp_model is not None
-                ddp_model.require_backward_grad_sync = (
-                    micro_step == grad_accum_steps - 1
+
+        for _ in range(args.N_sup):
+            train_loss = torch.zeros((), device=device)
+            for micro_step in range(grad_accum_steps):
+                if distributed:
+                    assert ddp_model is not None
+                    ddp_model.require_backward_grad_sync = (
+                        micro_step == grad_accum_steps - 1
+                    )
+                x, y_true = train_loader.next_batch(
+                    args.train_batch_tokens, args.train_seq_len, grad_accum_steps
                 )
-            x, y = train_loader.next_batch(
-                args.train_batch_tokens, args.train_seq_len, grad_accum_steps
+                with torch.autocast(
+                    device_type="cuda", dtype=torch.bfloat16, enabled=True
+                ):
+                    logits = model(x, y)
+                    loss = loss_fn(logits, y_true)
+                train_loss += loss.detach()
+                (loss * grad_scale).backward()
+            train_loss /= grad_accum_steps
+
+            frac = (
+                min(step / args.muon_momentum_warmup_steps, 1.0)
+                if args.muon_momentum_warmup_steps > 0
+                else 1.0
             )
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
-                loss = model(x, y)
-            train_loss += loss.detach()
-            (loss * grad_scale).backward()
-        train_loss /= grad_accum_steps
+            muon_momentum = (
+                1 - frac
+            ) * args.muon_momentum_warmup_start + frac * args.muon_momentum
+            for group in optimizer_muon.param_groups:
+                group["momentum"] = muon_momentum
 
-        frac = (
-            min(step / args.muon_momentum_warmup_steps, 1.0)
-            if args.muon_momentum_warmup_steps > 0
-            else 1.0
-        )
-        muon_momentum = (
-            1 - frac
-        ) * args.muon_momentum_warmup_start + frac * args.muon_momentum
-        for group in optimizer_muon.param_groups:
-            group["momentum"] = muon_momentum
+            for opt in optimizers:
+                for group in opt.param_groups:
+                    group["lr"] = group["base_lr"] * scale
 
-        for opt in optimizers:
-            for group in opt.param_groups:
-                group["lr"] = group["base_lr"] * scale
-
-        if args.grad_clip_norm > 0:
-            torch.nn.utils.clip_grad_norm_(base_model.parameters(), args.grad_clip_norm)
-        for opt in optimizers:
-            opt.step()
-        zero_grad_all()
+            if args.grad_clip_norm > 0:
+                torch.nn.utils.clip_grad_norm_(
+                    base_model.parameters(), args.grad_clip_norm
+                )
+            for opt in optimizers:
+                opt.step()
+            zero_grad_all()
 
         step += 1
         approx_training_time_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
