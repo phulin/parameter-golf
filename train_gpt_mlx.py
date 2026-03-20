@@ -8,6 +8,7 @@ Hard stop: To keep readable for newcomers, let's make sure `train_gpt.py` and `t
 from __future__ import annotations
 
 import glob
+import importlib.metadata
 import json
 import math
 import os
@@ -18,6 +19,7 @@ import uuid
 import zlib
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import sentencepiece as spm
@@ -754,14 +756,18 @@ def quantize_state_dict_int8(
 
 def dequantize_state_dict_int8(quant_obj: dict[str, object]) -> dict[str, mx.array]:
     out: dict[str, mx.array] = {}
-    qmeta = quant_obj.get("qmeta", {})
-    passthrough_orig_dtypes: dict[str, str] = quant_obj.get(
-        "passthrough_orig_dtypes", {}
+    qmeta = cast(dict[str, dict[str, object]], quant_obj.get("qmeta", {}))
+    passthrough_orig_dtypes = cast(
+        dict[str, str], quant_obj.get("passthrough_orig_dtypes", {})
     )
-    for name, q in quant_obj["quantized"].items():
+    quantized = cast(dict[str, np.ndarray], quant_obj["quantized"])
+    dtypes = cast(dict[str, str], quant_obj["dtypes"])
+    scales = cast(dict[str, np.ndarray], quant_obj["scales"])
+    passthrough = cast(dict[str, np.ndarray], quant_obj["passthrough"])
+    for name, q in quantized.items():
         q_np = np.asarray(q, dtype=np.int8)
-        dtype_name = quant_obj["dtypes"][name]
-        scale = np.asarray(quant_obj["scales"][name], dtype=np.float32)
+        dtype_name = dtypes[name]
+        scale = np.asarray(scales[name], dtype=np.float32)
         if qmeta.get(name, {}).get("scheme") == "per_row" or scale.ndim > 0:
             # Broadcast the saved row scale back across trailing dimensions.
             out_arr = q_np.astype(np.float32) * scale.reshape(
@@ -770,7 +776,7 @@ def dequantize_state_dict_int8(quant_obj: dict[str, object]) -> dict[str, mx.arr
         else:
             out_arr = q_np.astype(np.float32) * float(scale)
         out[name] = mx.array(out_arr, dtype=MX_DTYPE_FROM_NAME[dtype_name])
-    for name, arr in quant_obj["passthrough"].items():
+    for name, arr in passthrough.items():
         # Restore small tensors, undoing the temporary fp16 storage cast if needed.
         out_arr = np.array(arr, copy=True)
         orig_dtype = passthrough_orig_dtypes.get(name)
@@ -789,14 +795,19 @@ def build_sentencepiece_luts(
     base_bytes_lut = np.zeros((table_size,), dtype=np.int16)
     has_leading_space_lut = np.zeros((table_size,), dtype=np.bool_)
     is_boundary_token_lut = np.ones((table_size,), dtype=np.bool_)
+    is_control = getattr(sp, "is_control")
+    is_unknown = getattr(sp, "is_unknown")
+    is_unused = getattr(sp, "is_unused")
+    is_byte = getattr(sp, "is_byte")
+    id_to_piece = getattr(sp, "id_to_piece")
     for token_id in range(sp_vocab_size):
-        if sp.is_control(token_id) or sp.is_unknown(token_id) or sp.is_unused(token_id):
+        if is_control(token_id) or is_unknown(token_id) or is_unused(token_id):
             continue
         is_boundary_token_lut[token_id] = False
-        if sp.is_byte(token_id):
+        if is_byte(token_id):
             base_bytes_lut[token_id] = 1
             continue
-        piece = sp.id_to_piece(token_id)
+        piece = cast(str, id_to_piece(token_id))
         if piece.startswith("▁"):
             has_leading_space_lut[token_id] = True
             piece = piece[1:]
@@ -892,6 +903,7 @@ def loss_and_grad_chunked(
         grad_accum = accumulate_flat_grads(grad_accum, grads, scale)
         if args.mlx_eager_eval:
             mx.eval(loss_value, grad_accum)  # materialize each chunk to cap peak memory
+    assert grad_accum is not None
     return loss_value, tree_unflatten(list(grad_accum.items()))
 
 
@@ -993,10 +1005,11 @@ def main() -> None:
             print(msg, file=f)
 
     code = Path(__file__).read_text(encoding="utf-8")
+    mlx_version = importlib.metadata.version("mlx")
     log(code, console=False)
     log("=" * 100, console=False)
     log(f"Running Python {sys.version}", console=False)
-    log(f"Running MLX {mx.__version__}", console=False)
+    log(f"Running MLX {mlx_version}", console=False)
     log("=" * 100, console=False)
 
     if not args.tie_embeddings:
@@ -1005,7 +1018,8 @@ def main() -> None:
         raise ValueError(
             f"TOKENIZER_PATH must point to a SentencePiece .model file: {args.tokenizer_path}"
         )
-    sp = spm.SentencePieceProcessor(model_file=args.tokenizer_path)
+    sp = spm.SentencePieceProcessor()
+    sp.Load(args.tokenizer_path)
     if int(sp.vocab_size()) != args.vocab_size:
         raise ValueError(
             f"VOCAB_SIZE={args.vocab_size} does not match tokenizer vocab_size={int(sp.vocab_size())}"
@@ -1064,9 +1078,13 @@ def main() -> None:
     )
 
     # Print config once so logs are self-describing.
-    n_params = sum(int(np.prod(p.shape)) for _, p in tree_flatten(model.parameters()))
+    n_params = sum(
+        int(np.prod(cast(mx.array, p).shape))
+        for _, p in tree_flatten(model.parameters())
+        if isinstance(p, mx.array)
+    )
     log(f"run_id:{args.run_id}")
-    log(f"mlx_version:{mx.__version__}")
+    log(f"mlx_version:{mlx_version}")
     log(f"train_loader:shards pattern={args.train_files}")
     log(f"val_loader:shards pattern={args.val_files} tokens:{val_tokens.size - 1}")
     if expected_train_files is None:
@@ -1214,6 +1232,7 @@ def main() -> None:
                     train_loss, accum
                 )  # materialize each microbatch to cap peak memory
 
+        assert accum is not None
         grads = tree_unflatten(list(accum.items()))
         grads = clip_grad_tree(grads, args.grad_clip_norm)
         train_loss_value = float(train_loss.item())
@@ -1247,7 +1266,11 @@ def main() -> None:
     # quantized roundtrip directly by loading the dequantized tensors back into the
     # model and running one final validation pass.
     out_path = out_dir / f"{args.run_id}_mlx_model.npz"
-    flat_state = {k: v for k, v in tree_flatten(model.state)}
+    flat_state = {
+        k: cast(mx.array, v)
+        for k, v in tree_flatten(model.state)
+        if isinstance(v, mx.array)
+    }
     mx.savez(str(out_path), **flat_state)
     log(f"saved_model:{out_path} bytes:{out_path.stat().st_size}")
 
