@@ -4,11 +4,20 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
+from dotenv import load_dotenv
+
 
 def _is_truthy(value: str | None) -> bool:
     if value is None:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+def wandb_enabled() -> bool:
+    load_dotenv(override=False)
+    enabled = os.environ.get("WANDB_ENABLED")
+    if enabled is not None:
+        return _is_truthy(enabled)
+    return bool(os.environ.get("WANDB_API_KEY"))
 
 
 def hyperparameters_to_config(args: Any) -> dict[str, Any]:
@@ -28,6 +37,9 @@ def init_wandb(
     config: Mapping[str, Any],
     extra_config: Mapping[str, Any] | None = None,
 ):
+    if not wandb_enabled():
+        return None
+
     try:
         import wandb
     except ImportError as exc:
