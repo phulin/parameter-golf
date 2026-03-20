@@ -11,10 +11,6 @@ def _is_truthy(value: str | None) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def wandb_enabled() -> bool:
-    return _is_truthy(os.environ.get("WANDB_ENABLED"))
-
-
 def hyperparameters_to_config(args: Any) -> dict[str, Any]:
     config: dict[str, Any] = {}
     for key, value in vars(type(args)).items():
@@ -32,9 +28,6 @@ def init_wandb(
     config: Mapping[str, Any],
     extra_config: Mapping[str, Any] | None = None,
 ):
-    if not wandb_enabled():
-        return None
-
     try:
         import wandb
     except ImportError as exc:
