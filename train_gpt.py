@@ -76,6 +76,7 @@ class Hyperparameters:
     mlp_mult = int(os.environ.get("MLP_MULT", 2))
     num_experts = int(os.environ.get("NUM_EXPERTS", 8))
     num_active_experts = int(os.environ.get("NUM_ACTIVE_EXPERTS", 2))
+    expert_balance_lambda = float(os.environ.get("EXPERT_BALANCE_LAMBDA", 1e-3))
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
@@ -850,6 +851,7 @@ class ExpertAttention(nn.Module):
     depth_sin: Tensor
     depth_rev_cos: Tensor
     depth_rev_sin: Tensor
+    expert_bias: Tensor
 
     def __init__(
         self,
@@ -859,6 +861,7 @@ class ExpertAttention(nn.Module):
         num_active_experts: int,
         max_depth: int,
         rope_base: float,
+        balance_lambda: float = 1e-3,
     ):
         super().__init__()
         if num_experts <= 0:
@@ -876,8 +879,10 @@ class ExpertAttention(nn.Module):
         self.dim = dim
         self.num_experts = num_experts
         self.num_active_experts = num_active_experts
+        self.balance_lambda = balance_lambda
         self.router = CastedLinear(dim, dim, bias=False)
         self.expert_keys = nn.Parameter(torch.empty(num_experts, dim, dtype=torch.float32))
+        self.register_buffer("expert_bias", torch.zeros(num_experts))
         self.experts = nn.ModuleList(
             [ExpertMLP(dim, mlp_mult) for _ in range(num_experts)]
         )
@@ -935,11 +940,16 @@ class ExpertAttention(nn.Module):
         q = self._apply_depth_rope(q, depth_idx)
         logits = (q @ self.expert_keys.to(dtype=q.dtype).T) / math.sqrt(dim)
         gate_values = torch.sigmoid(logits)
-        _, topk_idx = torch.topk(logits, k=self.num_active_experts, dim=-1)
+        biased_logits = logits + self.expert_bias.to(dtype=logits.dtype)
+        _, topk_idx = torch.topk(biased_logits, k=self.num_active_experts, dim=-1)
         topk_gates = gate_values.gather(-1, topk_idx)
         topk_gates = topk_gates / topk_gates.sum(dim=-1, keepdim=True).clamp_min(1e-9)
         gates = torch.zeros_like(gate_values)
         gates.scatter_(-1, topk_idx, topk_gates)
+        if self.training and self.balance_lambda > 0:
+            expert_counts = gates.gt(0).float().sum(dim=0)
+            delta = self.balance_lambda * (expert_counts.median() - expert_counts).sign()
+            self.expert_bias.add_(delta.to(dtype=self.expert_bias.dtype))
 
         expert_outputs = torch.stack(
             [expert(flat_x) for expert in self.experts], dim=1
@@ -963,6 +973,7 @@ class Block(nn.Module):
         max_depth: int,
         rope_base: float,
         qk_gain_init: float,
+        expert_balance_lambda: float = 1e-3,
     ):
         super().__init__()
         self.attn_norm = RMSNorm()
@@ -975,7 +986,8 @@ class Block(nn.Module):
             dim, num_heads, num_kv_heads, max_depth, rope_base, qk_gain_init
         )
         self.expert_attn = ExpertAttention(
-            dim, mlp_mult, num_experts, num_active_experts, max_depth, rope_base
+            dim, mlp_mult, num_experts, num_active_experts, max_depth, rope_base,
+            balance_lambda=expert_balance_lambda,
         )
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.depth_attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
@@ -1020,6 +1032,7 @@ class RecursiveGPT(nn.Module):
         rope_base: float,
         qk_gain_init: float,
         num_recurrent_steps: int,
+        expert_balance_lambda: float = 1e-3,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -1047,6 +1060,7 @@ class RecursiveGPT(nn.Module):
                     num_recurrent_steps,
                     rope_base,
                     qk_gain_init,
+                    expert_balance_lambda=expert_balance_lambda,
                 )
             ]
         )
@@ -1538,6 +1552,7 @@ def main() -> None:
             rope_base=args.rope_base,
             qk_gain_init=args.qk_gain_init,
             num_recurrent_steps=args.num_recurrent_steps,
+            expert_balance_lambda=args.expert_balance_lambda,
         )
         .to(device)
         .bfloat16()
