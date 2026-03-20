@@ -67,7 +67,7 @@ class Hyperparameters:
     iterations = int(os.environ.get("ITERATIONS", 20000))
     warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 1200))
     warmup_steps = int(os.environ.get("WARMUP_STEPS", 20))
-    lr_warmup_steps = int(os.environ.get("LR_WARMUP_STEPS", 500))
+    lr_warmup_seconds = float(os.environ.get("LR_WARMUP_SECONDS", 20.0))
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 524_288))
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
@@ -1720,14 +1720,13 @@ def main() -> None:
     )
 
     def lr_mul(step: int, elapsed_ms: float) -> float:
-        if step < args.lr_warmup_steps:
-            return step / max(args.lr_warmup_steps, 1)
+        warmup_ms = args.lr_warmup_seconds * 1000.0
+        if elapsed_ms < warmup_ms:
+            return elapsed_ms / warmup_ms
         if max_wallclock_ms is not None:
-            step_ms = elapsed_ms / max(step, 1)
-            warmup_ms = args.lr_warmup_steps * step_ms
             t = min((elapsed_ms - warmup_ms) / max(max_wallclock_ms - warmup_ms, 1e-9), 1.0)
             return 0.5 * (1.0 + math.cos(math.pi * t))
-        t = (step - args.lr_warmup_steps) / max(args.iterations - args.lr_warmup_steps, 1)
+        t = min(step / max(args.iterations, 1), 1.0)
         return 0.5 * (1.0 + math.cos(math.pi * t))
 
     # Warmup primes the compiled forward/backward/optimizer paths, then we restore the
