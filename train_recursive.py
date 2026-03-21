@@ -723,8 +723,11 @@ class GPT(nn.Module):
         x0 = x
 
         # Apply the full encoder-decoder stack num_loops times.
-        # x carries refined state across loops; x0 stays fixed as the conditioning anchor.
+        # x0 is updated to the loop's input each iteration so resid_mix acts as a
+        # loop-level residual: each block can blend its input x with x0 (the refined
+        # state from the previous loop) rather than the stale original embedding.
         for _ in range(num_loops):
+            x0 = x
             skips: list[Tensor] = []
             # First half stores skips; second half reuses them in reverse order.
             for i in range(self.num_encoder_layers):
@@ -1218,7 +1221,9 @@ def main() -> None:
         model.train()
         for warmup_step in range(args.warmup_steps):
             zero_grad_all()
-            step_loops = random.randint(1, args.max_loops)
+            # Cycle through all loop counts so every compiled graph is warmed up
+            # before timing starts, rather than hitting them randomly mid-training.
+            step_loops = (warmup_step % args.max_loops) + 1
             for micro_step in range(grad_accum_steps):
                 if distributed:
                     model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
