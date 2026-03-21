@@ -795,8 +795,8 @@ class GPT(nn.Module):
             ]
         )
         self.deq = get_deq(
-            f_solver="broyden",
-            b_solver="broyden",
+            f_solver="anderson",
+            b_solver="anderson",
         )
         self.final_norm = RMSNorm()
         self.lm_head = (
@@ -818,15 +818,20 @@ class GPT(nn.Module):
         x = F.rms_norm(x, (x.size(-1),))
         x0 = x
 
+        act_dtype = x0.dtype
+
         def f(z):
+            # Cast back to activation dtype for the block, then return float32
+            # so the Anderson solver's Gram matrix stays numerically stable.
+            z_cast = z.to(act_dtype)
             for block in self.deq_blocks:
                 qd_fn = (lambda n: lora.q_lora(n)) if lora else None
                 vd_fn = (lambda n: lora.v_lora(n)) if lora else None
-                z = block(z, x0, qd_fn, vd_fn)
-            return z
+                z_cast = block(z_cast, x0, qd_fn, vd_fn)
+            return z_cast.float()
 
-        z_out, _ = self.deq(f, x0)
-        x = self.final_norm(z_out[0])
+        z_out, _ = self.deq(f, x0.float())
+        x = self.final_norm(z_out[0].to(act_dtype))
         if self.tie_embeddings:
             logits = F.linear(x, self.tok_emb.weight)
         else:
