@@ -819,7 +819,7 @@ class GPT(nn.Module):
             return self.deq_block(z, x0, qd_fn, vd_fn)
 
         z_out, _ = self.deq(f, x0)
-        x = self.final_norm(z_out)
+        x = self.final_norm(z_out[0])
         if self.tie_embeddings:
             logits = F.linear(x, self.tok_emb.weight)
         else:
