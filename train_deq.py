@@ -783,15 +783,20 @@ class GPT(nn.Module):
         # num_layers controls the number of DEQ iterations (f_max_iter).
         self.deq_blocks = nn.ModuleList(
             [
-                Block(model_dim, num_heads, num_kv_heads, mlp_mult, rope_base, qk_gain_init)
+                Block(
+                    model_dim,
+                    num_heads,
+                    num_kv_heads,
+                    mlp_mult,
+                    rope_base,
+                    qk_gain_init,
+                )
                 for _ in range(deq_block_layers)
             ]
         )
         self.deq = get_deq(
-            f_solver="fixed_point_iter",
-            b_solver="fixed_point_iter",
-            f_max_iter=num_layers,
-            b_max_iter=num_layers,
+            f_solver="anderson",
+            b_solver="anderson",
         )
         self.final_norm = RMSNorm()
         self.lm_head = (
@@ -1384,7 +1389,9 @@ def main() -> None:
             progress = min(elapsed_ms / max(max_wallclock_ms, 1.0), 1.0)
         else:
             progress = min(step / max(args.iterations, 1), 1.0)
-        return args.lr_min_scale + (1.0 - args.lr_min_scale) * 0.5 * (1.0 + math.cos(math.pi * progress))
+        return args.lr_min_scale + (1.0 - args.lr_min_scale) * 0.5 * (
+            1.0 + math.cos(math.pi * progress)
+        )
 
     # Warmup primes the compiled forward/backward/optimizer paths, then we restore the
     # initial weights/optimizer state so measured training starts from the true init.
