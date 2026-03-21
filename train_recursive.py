@@ -824,7 +824,11 @@ class GPT(nn.Module):
         x = self.tok_emb(input_ids)
         x = F.rms_norm(x, (x.size(-1),))
         x0 = x
-        loss = torch.zeros(x.shape[:-1], dtype=x.dtype, device=x.device)
+        loss = (
+            torch.zeros(x.shape[:-1], dtype=x.dtype, device=x.device)
+            if lora
+            else torch.tensor(0.0, dtype=x.dtype, device=x.device)
+        )
 
         # Apply the full encoder-decoder stack num_loops times.
         # x carries refined state across loops; x0 stays fixed as the conditioning anchor.
@@ -863,11 +867,12 @@ class GPT(nn.Module):
                     target_ids.reshape(-1),
                     reduction="none",
                 ).reshape(bsz, sl)
-            loss += weight * F.cross_entropy(
-                logits.float().reshape(-1, logits.size(-1)),
-                target_ids.reshape(-1),
-                reduction="mean",
-            )
+            else:
+                loss += weight * F.cross_entropy(
+                    logits.float().reshape(-1, logits.size(-1)),
+                    target_ids.reshape(-1),
+                    reduction="mean",
+                )
 
         return loss
 
