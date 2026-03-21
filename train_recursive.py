@@ -852,7 +852,7 @@ class GPT(nn.Module):
                 vd = lora.v_loras[bi] if lora else None
                 x = self.blocks[bi](x, x0, qd, vd)
 
-            weight = 2 * loop / (num_loops * (num_loops + 1))
+            weight = 2 * (loop + 1) / (num_loops * (num_loops + 1))
             norm = self.final_norm(x)
             if self.tie_embeddings:
                 logits = F.linear(norm, self.tok_emb.weight)
