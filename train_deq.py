@@ -795,9 +795,8 @@ class GPT(nn.Module):
             ]
         )
         self.deq = get_deq(
-            f_solver="anderson",
-            b_solver="anderson",
-            lam=1e-2,
+            f_solver="broyden",
+            b_solver="broyden",
         )
         self.final_norm = RMSNorm()
         self.lm_head = (
