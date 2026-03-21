@@ -94,7 +94,8 @@ class Hyperparameters:
 
     # Recursive loop hyperparameters.
     max_loops = int(os.environ.get("MAX_LOOPS", 4))
-    eval_loops = int(os.environ.get("EVAL_LOOPS", 0))  # 0 = use max_loops
+    eval_loops = int(os.environ.get("EVAL_LOOPS", 0))      # 0 = use max_loops
+    ttt_eval_loops = int(os.environ.get("TTT_EVAL_LOOPS", 1))  # separate: TTT has many more fwd passes per doc
 
     # Test-time training (LoRA) hyperparameters.
     ttt_lora_rank = int(os.environ.get("TTT_LORA_RANK", 8))
@@ -1453,19 +1454,23 @@ def main() -> None:
     )
 
     # LoRA test-time training evaluation (the competition score)
-    torch._dynamo.reset()
-    torch.cuda.synchronize()
-    t_ttt = time.perf_counter()
-    ttt_val_loss, ttt_val_bpb = eval_val_ttt_lora(
-        args, base_model, rank, world_size, device,
-        base_bytes_lut, has_leading_space_lut, is_boundary_token_lut,
-        num_loops=resolved_eval_loops,
-    )
-    torch.cuda.synchronize()
-    log0(
-        f"final_int8_ttt_lora val_loss:{ttt_val_loss:.4f} val_bpb:{ttt_val_bpb:.4f} "
-        f"eval_time:{1000.0 * (time.perf_counter() - t_ttt):.0f}ms"
-    )
+    if args.ttt_eval_loops > 0:
+        torch._dynamo.reset()
+        torch.cuda.synchronize()
+        t_ttt = time.perf_counter()
+        ttt_val_loss, ttt_val_bpb = eval_val_ttt_lora(
+            args, base_model, rank, world_size, device,
+            base_bytes_lut, has_leading_space_lut, is_boundary_token_lut,
+            num_loops=args.ttt_eval_loops,
+        )
+        torch.cuda.synchronize()
+        log0(
+            f"final_int8_ttt_lora val_loss:{ttt_val_loss:.4f} val_bpb:{ttt_val_bpb:.4f} "
+            f"eval_time:{1000.0 * (time.perf_counter() - t_ttt):.0f}ms"
+        )
+    else:
+        ttt_val_loss, ttt_val_bpb = float("nan"), float("nan")
+        log0("final_int8_ttt_lora skipped (TTT_EVAL_LOOPS=0)")
     update_summary(
         wandb_run,
         {
