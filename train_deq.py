@@ -76,6 +76,7 @@ class Hyperparameters:
     # Model shape.
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
     num_layers = int(os.environ.get("NUM_LAYERS", 9))
+    deq_block_layers = int(os.environ.get("DEQ_BLOCK_LAYERS", 1))
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
@@ -759,6 +760,7 @@ class GPT(nn.Module):
         self,
         vocab_size: int,
         num_layers: int,
+        deq_block_layers: int,
         model_dim: int,
         num_heads: int,
         num_kv_heads: int,
@@ -777,14 +779,13 @@ class GPT(nn.Module):
         self.logit_softcap = logit_softcap
         self.num_layers = num_layers
         self.tok_emb = nn.Embedding(vocab_size, model_dim)
-        # DEQ: single shared block iterated to fixed point instead of num_layers distinct blocks.
-        self.deq_block = Block(
-            model_dim,
-            num_heads,
-            num_kv_heads,
-            mlp_mult,
-            rope_base,
-            qk_gain_init,
+        # DEQ: a stack of deq_block_layers distinct blocks iterated to a fixed point.
+        # num_layers controls the number of DEQ iterations (f_max_iter).
+        self.deq_blocks = nn.ModuleList(
+            [
+                Block(model_dim, num_heads, num_kv_heads, mlp_mult, rope_base, qk_gain_init)
+                for _ in range(deq_block_layers)
+            ]
         )
         self.deq = get_deq(
             f_solver="fixed_point_iter",
@@ -812,11 +813,12 @@ class GPT(nn.Module):
         x = F.rms_norm(x, (x.size(-1),))
         x0 = x
 
-        qd_fn = (lambda n: lora.q_lora(n)) if lora else None
-        vd_fn = (lambda n: lora.v_lora(n)) if lora else None
-
         def f(z):
-            return self.deq_block(z, x0, qd_fn, vd_fn)
+            for block in self.deq_blocks:
+                qd_fn = (lambda n: lora.q_lora(n)) if lora else None
+                vd_fn = (lambda n: lora.v_lora(n)) if lora else None
+                z = block(z, x0, qd_fn, vd_fn)
+            return z
 
         z_out, _ = self.deq(f, x0)
         x = self.final_norm(z_out[0])
@@ -877,7 +879,8 @@ class BatchedTTTLoRA(nn.Module):
         dim = model.tok_emb.embedding_dim
         vocab = model.tok_emb.num_embeddings
         self.lm_head_lora = BatchedLinearLoRA(bsz, dim, vocab, rank)
-        block = model.deq_block
+        block = model.deq_blocks[0]
+        assert isinstance(block, Block)
         self.q_lora = BatchedLinearLoRA(bsz, dim, block.attn.c_q.weight.shape[0], rank)
         self.v_lora = BatchedLinearLoRA(bsz, dim, block.attn.c_v.weight.shape[0], rank)
 
@@ -1222,6 +1225,7 @@ def main() -> None:
         GPT(
             vocab_size=args.vocab_size,
             num_layers=args.num_layers,
+            deq_block_layers=args.deq_block_layers,
             model_dim=args.model_dim,
             num_heads=args.num_heads,
             num_kv_heads=args.num_kv_heads,
@@ -1253,7 +1257,7 @@ def main() -> None:
     # - untied lm_head (Adam) uses HEAD_LR
     # - matrix params in transformer blocks use MATRIX_LR via Muon
     # - vectors/scalars use SCALAR_LR via Adam
-    block_named_params = list(base_model.deq_block.named_parameters())
+    block_named_params = list(base_model.deq_blocks.named_parameters())
     matrix_params = [
         p
         for name, p in block_named_params
