@@ -88,6 +88,10 @@ class Hyperparameters:
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
     grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.0))
 
+    # LR schedule (wallclock-based cosine with linear warmup).
+    lr_warmup_ms = float(os.environ.get("LR_WARMUP_MS", 10_000.0))  # 10 s
+    lr_min_frac = float(os.environ.get("LR_MIN_FRAC", 0.1))
+
     # Recursive loop hyperparameters.
     max_loops = int(os.environ.get("MAX_LOOPS", 4))
     eval_loops = int(os.environ.get("EVAL_LOOPS", 0))  # 0 = use max_loops
@@ -1202,16 +1206,17 @@ def main() -> None:
 
     max_wallclock_ms = 1000.0 * args.max_wallclock_seconds if args.max_wallclock_seconds > 0 else None
 
-    def lr_mul(step: int, elapsed_ms: float) -> float:
-        if args.warmdown_iters <= 0:
-            return 1.0
+    def lr_mul(elapsed_ms: float) -> float:
+        # Linear warmup.
+        if elapsed_ms < args.lr_warmup_ms:
+            return elapsed_ms / max(args.lr_warmup_ms, 1e-9)
+        # Cosine decay from end of warmup to end of wallclock budget.
         if max_wallclock_ms is None:
-            warmdown_start = max(args.iterations - args.warmdown_iters, 0)
-            return max((args.iterations - step) / max(args.warmdown_iters, 1), 0.0) if warmdown_start <= step < args.iterations else 1.0
-        step_ms = elapsed_ms / max(step, 1)
-        warmdown_ms = args.warmdown_iters * step_ms
-        remaining_ms = max(max_wallclock_ms - elapsed_ms, 0.0)
-        return remaining_ms / max(warmdown_ms, 1e-9) if remaining_ms <= warmdown_ms else 1.0
+            return 1.0
+        decay_ms = max(max_wallclock_ms - args.lr_warmup_ms, 1e-9)
+        t = min((elapsed_ms - args.lr_warmup_ms) / decay_ms, 1.0)
+        cosine = 0.5 * (1.0 + math.cos(math.pi * t))
+        return args.lr_min_frac + (1.0 - args.lr_min_frac) * cosine
 
     # Warmup primes the compiled forward/backward/optimizer paths, then we restore the
     # initial weights/optimizer state so measured training starts from the true init.
@@ -1300,7 +1305,7 @@ def main() -> None:
             break
 
         elapsed_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
-        scale = lr_mul(step, elapsed_ms)
+        scale = lr_mul(elapsed_ms)
         zero_grad_all()
         step_loops = random.randint(1, args.max_loops)
         train_loss = torch.zeros((), device=device)
