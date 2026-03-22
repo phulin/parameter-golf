@@ -803,6 +803,20 @@ class GPT(nn.Module):
                 for i in range(num_layers)
             ]
         )
+        block_kwargs = dict(
+            dim=model_dim,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            mlp_mult=mlp_mult,
+            rope_base=rope_base,
+            qk_gain_init=qk_gain_init,
+        )
+        self.pre_adapter = Block(**block_kwargs)   # Prelude P
+        self.post_adapter = Block(**block_kwargs)  # Coda C
+        # Maps (state, prelude embedding) from 2h → h at start of each recurrent step.
+        self.inject_linear = CastedLinear(2 * model_dim, model_dim, bias=False)
+        # Learnable scale for the initial noise state s_0 ~ N(0, scale^2 * I).
+        self.state_init_scale = nn.Parameter(torch.tensor(0.02))
         self.final_norm = RMSNorm()
         self.lm_head = (
             None if tie_embeddings else CastedLinear(model_dim, vocab_size, bias=False)
@@ -831,25 +845,35 @@ class GPT(nn.Module):
     def forward(
         self, input_ids: Tensor, target_ids: Tensor, lora=None, num_loops: int = 1
     ) -> Tensor:
-        x = self.tok_emb(input_ids)
-        x = F.rms_norm(x, (x.size(-1),))
-        x0 = x
+        raw = self.tok_emb(input_ids)
+        raw = F.rms_norm(raw, (raw.size(-1),))
+
+        # Prelude P: encode input once to produce the injection embedding e.
+        e = self.pre_adapter(raw, raw)
+
+        # Initial recurrent state s_0 ~ N(0, scale^2 * I).
+        scale = self.state_init_scale.to(dtype=e.dtype)
+        s = scale * torch.randn_like(e)
+
         loss = (
-            torch.zeros(x.shape[:-1], dtype=x.dtype, device=x.device)
+            torch.zeros(e.shape[:-1], dtype=e.dtype, device=e.device)
             if lora
-            else torch.tensor(0.0, dtype=x.dtype, device=x.device)
+            else torch.tensor(0.0, dtype=e.dtype, device=e.device)
         )
 
-        # Apply the full encoder-decoder stack num_loops times.
-        # x carries refined state across loops; x0 stays fixed as the conditioning anchor.
+        # Recurrent loop: each iteration maps (s, e) → new state s via shared blocks.
+        # e is injected at the start of each step via the 2h→h inject_linear, and also
+        # serves as the residual-mix anchor (x0) inside every block.
         for loop in range(num_loops):
+            # Input injection: concat state and prelude embedding, project to model_dim.
+            x = self.inject_linear(torch.cat([s, e], dim=-1))
             x = x + self._depth_emb(loop, num_loops, x.size(-1), x.device, x.dtype)
             skips: list[Tensor] = []
-            # First half stores skips; second half reuses them in reverse order.
+            # e is the per-layer skip anchor — keeps input signal alive through each block.
             for i in range(self.num_encoder_layers):
                 qd = lora.q_loras[i] if lora else None
                 vd = lora.v_loras[i] if lora else None
-                x = self.blocks[i](x, x0, qd, vd)
+                x = self.blocks[i](x, e, qd, vd)
                 skips.append(x)
             for i in range(self.num_decoder_layers):
                 bi = self.num_encoder_layers + i
@@ -861,10 +885,13 @@ class GPT(nn.Module):
                     )
                 qd = lora.q_loras[bi] if lora else None
                 vd = lora.v_loras[bi] if lora else None
-                x = self.blocks[bi](x, x0, qd, vd)
+                x = self.blocks[bi](x, e, qd, vd)
+            s = x  # update state (without coda, so s stays in recurrent latent space)
 
+            # Coda C: project final state to logits for this loop's auxiliary loss.
+            out = self.post_adapter(s, e)
             weight = 2 * (loop + 1) / (num_loops * (num_loops + 1))
-            norm = self.final_norm(x)
+            norm = self.final_norm(out)
             if self.tie_embeddings:
                 logits = F.linear(norm, self.tok_emb.weight)
             else:
@@ -1310,7 +1337,12 @@ def main() -> None:
     # - untied lm_head (Adam) uses HEAD_LR
     # - matrix params in transformer blocks use MATRIX_LR via Muon
     # - vectors/scalars use SCALAR_LR via Adam
-    block_named_params = list(base_model.blocks.named_parameters())
+    block_named_params = (
+        list(base_model.blocks.named_parameters())
+        + [("pre_adapter." + n, p) for n, p in base_model.pre_adapter.named_parameters()]
+        + [("post_adapter." + n, p) for n, p in base_model.post_adapter.named_parameters()]
+        + [("inject_linear.weight", base_model.inject_linear.weight)]
+    )
     matrix_params = [
         p
         for name, p in block_named_params
@@ -1325,6 +1357,7 @@ def main() -> None:
     ]
     if base_model.skip_weights.numel() > 0:
         scalar_params.append(base_model.skip_weights)
+    scalar_params.append(base_model.state_init_scale)
     token_lr = args.tied_embed_lr if args.tie_embeddings else args.embed_lr
     optimizer_tok = torch.optim.Adam(
         [{"params": [base_model.tok_emb.weight], "lr": token_lr, "base_lr": token_lr}],
