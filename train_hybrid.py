@@ -736,8 +736,11 @@ class Block(nn.Module):
         if use_deltanet:
             self.attn = FLAGatedDeltaNet(
                 hidden_size=dim,
+                num_heads=num_heads,
+                num_v_heads=num_heads,
                 head_dim=dim // num_heads,
                 expand_v=1,
+                mode="chunk",
                 use_gate=True,
                 use_short_conv=False,
             )
