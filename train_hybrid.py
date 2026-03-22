@@ -24,6 +24,7 @@ import sentencepiece as spm
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from fla.layers import GatedDeltaNet as FLAGatedDeltaNet
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -82,7 +83,7 @@ class Hyperparameters:
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
-    deltanet_chunk_size = int(os.environ.get("DELTANET_CHUNK_SIZE", 64))
+
 
     # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
@@ -701,102 +702,6 @@ class CausalSelfAttention(nn.Module):
         return self.proj(y)
 
 
-class GatedDeltaNet(nn.Module):
-    """Linear attention with the delta rule and per-head write/forget gates.
-
-    The recurrent state update is applied exactly within each chunk so tokens can
-    read memories written earlier in the same chunk and forget gates affect both
-    carried state and new writes.
-    """
-
-    def __init__(
-        self,
-        dim: int,
-        num_heads: int,
-        chunk_size: int = 64,
-        rope_base: float = 10000.0,
-        qk_gain_init: float = 1.0,
-    ):
-        super().__init__()
-        if dim % num_heads != 0:
-            raise ValueError("model_dim must be divisible by num_heads")
-        self.num_heads = num_heads
-        self.head_dim = dim // num_heads
-        if self.head_dim % 2 != 0:
-            raise ValueError("head_dim must be even for RoPE")
-        self.chunk_size = chunk_size
-        self.c_q = CastedLinear(dim, dim, bias=False)
-        self.c_k = CastedLinear(dim, dim, bias=False)
-        self.c_v = CastedLinear(dim, dim, bias=False)
-        self.c_beta = CastedLinear(dim, num_heads, bias=True)  # write gate
-        self.c_alpha = CastedLinear(dim, num_heads, bias=True)  # forget gate
-        self.proj = CastedLinear(dim, dim, bias=False)
-        self.proj._zero_init = True
-        self.q_gain = nn.Parameter(
-            torch.full((num_heads,), qk_gain_init, dtype=torch.float32)
-        )
-        self.rotary = Rotary(self.head_dim, base=rope_base)
-
-    def forward(self, x: Tensor, q_delta=None, v_delta=None) -> Tensor:
-        B, T, D = x.shape
-        H, Dh = self.num_heads, self.head_dim
-        C = self.chunk_size
-        num_chunks = (T + C - 1) // C
-
-        q = self.c_q(x) + (q_delta if q_delta is not None else 0)
-        k = self.c_k(x)
-        v = self.c_v(x) + (v_delta if v_delta is not None else 0)
-
-        beta = torch.sigmoid(self.c_beta(x))   # (B, T, H) -- write gate
-        alpha = torch.sigmoid(self.c_alpha(x)) # (B, T, H) -- forget gate
-
-        q = q.reshape(B, T, H, Dh)
-        k = k.reshape(B, T, H, Dh)
-        v = v.reshape(B, T, H, Dh)
-
-        # Normalize keys and queries for stable delta-rule dynamics.
-        q = F.normalize(q, dim=-1)
-        k = F.normalize(k, dim=-1)
-        cos, sin = self.rotary(T, x.device, q.dtype)
-        q = apply_rotary_emb(q.transpose(1, 2), cos, sin).transpose(1, 2)
-        k = apply_rotary_emb(k.transpose(1, 2), cos, sin).transpose(1, 2)
-        q = q * self.q_gain.to(dtype=q.dtype)[None, None, :, None]
-
-        # State S[b,h,i,j]: association from key-dim i to value-dim j.
-        # Write: S_t = alpha_t * S_{t-1} + beta_t * outer(k_t, delta_v_t)
-        # Read:  o_t = q_t @ S_t
-        S = x.new_zeros(B, H, Dh, Dh)
-        chunk_outputs: list[Tensor] = []
-
-        for c in range(num_chunks):
-            sl = slice(c * C, min((c + 1) * C, T))
-            q_c = q[:, sl]  # (B, C', H, Dh)
-            k_c = k[:, sl]  # (B, C', H, Dh)
-            v_c = v[:, sl]  # (B, C', H, Dh)
-            beta_c = beta[:, sl]  # (B, C', H)
-            alpha_c = alpha[:, sl]  # (B, C', H)
-
-            out_c: list[Tensor] = []
-            for t in range(q_c.size(1)):
-                k_t = k_c[:, t]
-                v_t = v_c[:, t]
-                q_t = q_c[:, t]
-                beta_t = beta_c[:, t]
-                alpha_t = alpha_c[:, t]
-
-                retrieval_t = torch.einsum("bhi,bhij->bhj", k_t, S)
-                corrected_v_t = v_t - retrieval_t
-                write_t = torch.einsum(
-                    "bh,bhi,bhj->bhij", beta_t, k_t, corrected_v_t
-                )
-                S = alpha_t[:, :, None, None] * S + write_t
-                out_c.append(torch.einsum("bhi,bhij->bhj", q_t, S))
-
-            chunk_outputs.append(torch.stack(out_c, dim=1))
-
-        output = torch.cat(chunk_outputs, dim=1).reshape(B, T, D)
-        return self.proj(output)
-
 
 class MLP(nn.Module):
     # relu^2 MLP from the original modded-nanogpt setup
@@ -822,18 +727,18 @@ class Block(nn.Module):
         rope_base: float,
         qk_gain_init: float,
         use_deltanet: bool = False,
-        chunk_size: int = 64,
     ):
         super().__init__()
+        self.use_deltanet = use_deltanet
         self.attn_norm = RMSNorm()
         self.mlp_norm = RMSNorm()
         if use_deltanet:
-            self.attn = GatedDeltaNet(
-                dim,
-                num_heads,
-                chunk_size,
-                rope_base=rope_base,
-                qk_gain_init=qk_gain_init,
+            self.attn = FLAGatedDeltaNet(
+                hidden_size=dim,
+                head_dim=dim // num_heads,
+                expand_v=1,
+                use_gate=True,
+                use_short_conv=True,
             )
         else:
             self.attn = CausalSelfAttention(
@@ -852,9 +757,12 @@ class Block(nn.Module):
         mix = self.resid_mix.to(dtype=x.dtype)
         x = mix[0][None, None, :] * x + mix[1][None, None, :] * x0
         n = self.attn_norm(x)
-        qd = q_delta_fn(n) if q_delta_fn is not None else None
-        vd = v_delta_fn(n) if v_delta_fn is not None else None
-        attn_out = self.attn(n, qd, vd)
+        if self.use_deltanet:
+            attn_out = self.attn(n)[0]
+        else:
+            qd = q_delta_fn(n) if q_delta_fn is not None else None
+            vd = v_delta_fn(n) if v_delta_fn is not None else None
+            attn_out = self.attn(n, qd, vd)
         x = x + self.attn_scale.to(dtype=x.dtype)[None, None, :] * attn_out
         x = x + self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(
             self.mlp_norm(x)
@@ -876,7 +784,6 @@ class GPT(nn.Module):
         logit_softcap: float,
         rope_base: float,
         qk_gain_init: float,
-        deltanet_chunk_size: int = 64,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -902,7 +809,6 @@ class GPT(nn.Module):
                     rope_base,
                     qk_gain_init,
                     use_deltanet=(i % 2 == 1),
-                    chunk_size=deltanet_chunk_size,
                 )
                 for i in range(num_layers)
             ]
@@ -1006,12 +912,11 @@ class BatchedTTTLoRA(nn.Module):
         self.q_loras = nn.ModuleList()
         self.v_loras = nn.ModuleList()
         for block in model.blocks:
-            self.q_loras.append(
-                BatchedLinearLoRA(bsz, dim, block.attn.c_q.weight.shape[0], rank)
-            )
-            self.v_loras.append(
-                BatchedLinearLoRA(bsz, dim, block.attn.c_v.weight.shape[0], rank)
-            )
+            # FLA GatedDeltaNet blocks don't expose c_q/c_v; LoRA is only applied to softmax-attn blocks.
+            q_out = block.attn.c_q.weight.shape[0] if hasattr(block.attn, 'c_q') else dim
+            v_out = block.attn.c_v.weight.shape[0] if hasattr(block.attn, 'c_v') else dim
+            self.q_loras.append(BatchedLinearLoRA(bsz, dim, q_out, rank))
+            self.v_loras.append(BatchedLinearLoRA(bsz, dim, v_out, rank))
 
     def reset(self) -> None:
         for m in self.modules():
@@ -1363,7 +1268,6 @@ def main() -> None:
             logit_softcap=args.logit_softcap,
             rope_base=args.rope_base,
             qk_gain_init=args.qk_gain_init,
-            deltanet_chunk_size=args.deltanet_chunk_size,
         )
         .to(device)
         .bfloat16()
@@ -1447,8 +1351,7 @@ def main() -> None:
     log0(f"world_size:{world_size} grad_accum_steps:{grad_accum_steps}")
     log0("sdp_backends:cudnn=False flash=True mem_efficient=False math=False")
     log0(
-        f"attention_mode:hybrid_gqa_deltanet num_heads:{args.num_heads} num_kv_heads:{args.num_kv_heads} "
-        f"deltanet_chunk_size:{args.deltanet_chunk_size}"
+        f"attention_mode:hybrid_gqa_fla_deltanet num_heads:{args.num_heads} num_kv_heads:{args.num_kv_heads}"
     )
     log0(
         f"tie_embeddings:{args.tie_embeddings} embed_lr:{token_lr} "
