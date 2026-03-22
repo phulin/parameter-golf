@@ -704,32 +704,44 @@ class CausalSelfAttention(nn.Module):
 class GatedDeltaNet(nn.Module):
     """Linear attention with the delta rule and per-head write/forget gates.
 
-    Training uses a chunked-parallel algorithm: within each chunk the state from
-    the start of the chunk is used for all delta corrections (an approximation
-    that improves with smaller chunk sizes). The forget-gate decay is the product
-    of alpha values over the chunk.
+    The recurrent state update is applied exactly within each chunk so tokens can
+    read memories written earlier in the same chunk and forget gates affect both
+    carried state and new writes.
     """
 
-    def __init__(self, dim: int, num_heads: int, chunk_size: int = 64):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        chunk_size: int = 64,
+        rope_base: float = 10000.0,
+        qk_gain_init: float = 1.0,
+    ):
         super().__init__()
         if dim % num_heads != 0:
             raise ValueError("model_dim must be divisible by num_heads")
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
+        if self.head_dim % 2 != 0:
+            raise ValueError("head_dim must be even for RoPE")
         self.chunk_size = chunk_size
         self.c_q = CastedLinear(dim, dim, bias=False)
         self.c_k = CastedLinear(dim, dim, bias=False)
         self.c_v = CastedLinear(dim, dim, bias=False)
-        self.c_beta = CastedLinear(dim, num_heads, bias=True)   # write gate
+        self.c_beta = CastedLinear(dim, num_heads, bias=True)  # write gate
         self.c_alpha = CastedLinear(dim, num_heads, bias=True)  # forget gate
         self.proj = CastedLinear(dim, dim, bias=False)
         self.proj._zero_init = True
+        self.q_gain = nn.Parameter(
+            torch.full((num_heads,), qk_gain_init, dtype=torch.float32)
+        )
+        self.rotary = Rotary(self.head_dim, base=rope_base)
 
     def forward(self, x: Tensor, q_delta=None, v_delta=None) -> Tensor:
         B, T, D = x.shape
         H, Dh = self.num_heads, self.head_dim
         C = self.chunk_size
-        num_chunks = T // C
+        num_chunks = (T + C - 1) // C
 
         q = self.c_q(x) + (q_delta if q_delta is not None else 0)
         k = self.c_k(x)
@@ -745,44 +757,42 @@ class GatedDeltaNet(nn.Module):
         # Normalize keys and queries for stable delta-rule dynamics.
         q = F.normalize(q, dim=-1)
         k = F.normalize(k, dim=-1)
+        cos, sin = self.rotary(T, x.device, q.dtype)
+        q = apply_rotary_emb(q.transpose(1, 2), cos, sin).transpose(1, 2)
+        k = apply_rotary_emb(k.transpose(1, 2), cos, sin).transpose(1, 2)
+        q = q * self.q_gain.to(dtype=q.dtype)[None, None, :, None]
 
         # State S[b,h,i,j]: association from key-dim i to value-dim j.
-        # Write: S += outer(k, delta_v) = einsum('bhi,bhj->bhij', k, delta_v)
-        # Read:  o = einsum('bchi,bhij->bchj', q_chunk, S)
+        # Write: S_t = alpha_t * S_{t-1} + beta_t * outer(k_t, delta_v_t)
+        # Read:  o_t = q_t @ S_t
         S = x.new_zeros(B, H, Dh, Dh)
         chunk_outputs: list[Tensor] = []
 
-        causal_mask = torch.tril(torch.ones(C, C, device=x.device, dtype=x.dtype))
-
         for c in range(num_chunks):
-            sl = slice(c * C, (c + 1) * C)
-            q_c = q[:, sl]      # (B, C, H, Dh)
-            k_c = k[:, sl]      # (B, C, H, Dh)
-            v_c = v[:, sl]      # (B, C, H, Dh)
-            beta_c = beta[:, sl]    # (B, C, H)
-            alpha_c = alpha[:, sl]  # (B, C, H)
+            sl = slice(c * C, min((c + 1) * C, T))
+            q_c = q[:, sl]  # (B, C', H, Dh)
+            k_c = k[:, sl]  # (B, C', H, Dh)
+            v_c = v[:, sl]  # (B, C', H, Dh)
+            beta_c = beta[:, sl]  # (B, C', H)
+            alpha_c = alpha[:, sl]  # (B, C', H)
 
-            # Delta-corrected values: v - S0 @ k (using chunk-start state).
-            retrieval = torch.einsum("bchi,bhij->bchj", k_c, S)  # (B, C, H, Dh)
-            corrected_v = v_c - retrieval
+            out_c: list[Tensor] = []
+            for t in range(q_c.size(1)):
+                k_t = k_c[:, t]
+                v_t = v_c[:, t]
+                q_t = q_c[:, t]
+                beta_t = beta_c[:, t]
+                alpha_t = alpha_c[:, t]
 
-            # Contribution from the carried state: q @ S.
-            from_S = torch.einsum("bchi,bhij->bchj", q_c, S)  # (B, C, H, Dh)
+                retrieval_t = torch.einsum("bhi,bhij->bhj", k_t, S)
+                corrected_v_t = v_t - retrieval_t
+                write_t = torch.einsum(
+                    "bh,bhi,bhj->bhij", beta_t, k_t, corrected_v_t
+                )
+                S = alpha_t[:, :, None, None] * S + write_t
+                out_c.append(torch.einsum("bhi,bhij->bhj", q_t, S))
 
-            # Within-chunk causal linear attention over corrected values.
-            # scores[b,h,t,s] = (q_t . k_s) * beta_s, masked to t >= s.
-            scores = torch.einsum("bthi,bshi->bhts", q_c, k_c)  # (B, H, C, C)
-            scores = scores * beta_c.permute(0, 2, 1).unsqueeze(2)  # scale by beta_s
-            scores = scores * causal_mask
-            from_chunk = torch.einsum("bhts,bshj->bthj", scores, corrected_v)  # (B, C, H, Dh)
-
-            chunk_outputs.append(from_S + from_chunk)
-
-            # State update: decay by product(alpha), then accumulate writes.
-            cum_alpha = alpha_c.prod(dim=1)  # (B, H)
-            S = cum_alpha[:, :, None, None] * S + torch.einsum(
-                "bch,bchi,bchj->bhij", beta_c, k_c, corrected_v
-            )
+            chunk_outputs.append(torch.stack(out_c, dim=1))
 
         output = torch.cat(chunk_outputs, dim=1).reshape(B, T, D)
         return self.proj(output)
@@ -818,7 +828,13 @@ class Block(nn.Module):
         self.attn_norm = RMSNorm()
         self.mlp_norm = RMSNorm()
         if use_deltanet:
-            self.attn = GatedDeltaNet(dim, num_heads, chunk_size)
+            self.attn = GatedDeltaNet(
+                dim,
+                num_heads,
+                chunk_size,
+                rope_base=rope_base,
+                qk_gain_init=qk_gain_init,
+            )
         else:
             self.attn = CausalSelfAttention(
                 dim, num_heads, num_kv_heads, rope_base, qk_gain_init
