@@ -811,6 +811,16 @@ class GPT(nn.Module):
             self.lm_head._zero_init = True
         self._init_weights()
 
+    @staticmethod
+    def _depth_emb(loop_idx: int, num_loops: int, dim: int, device, dtype) -> Tensor:
+        t = loop_idx / max(num_loops - 1, 1)
+        i = torch.arange(0, dim, 2, device=device, dtype=torch.float32)
+        freqs = t / (100.0 ** (i / dim))
+        emb = torch.zeros(dim, device=device, dtype=torch.float32)
+        emb[0::2] = freqs.sin()
+        emb[1::2] = freqs.cos()
+        return emb.to(dtype)
+
     def _init_weights(self) -> None:
         if self.tie_embeddings:
             nn.init.normal_(self.tok_emb.weight, mean=0.0, std=self.tied_embed_init_std)
@@ -833,6 +843,7 @@ class GPT(nn.Module):
         # Apply the full encoder-decoder stack num_loops times.
         # x carries refined state across loops; x0 stays fixed as the conditioning anchor.
         for loop in range(num_loops):
+            x = x + self._depth_emb(loop, num_loops, x.size(-1), x.device, x.dtype)
             skips: list[Tensor] = []
             # First half stores skips; second half reuses them in reverse order.
             for i in range(self.num_encoder_layers):
