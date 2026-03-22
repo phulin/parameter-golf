@@ -738,7 +738,7 @@ class Block(nn.Module):
                 head_dim=dim // num_heads,
                 expand_v=1,
                 use_gate=True,
-                use_short_conv=True,
+                use_short_conv=False,
             )
         else:
             self.attn = CausalSelfAttention(
