@@ -697,6 +697,10 @@ class LocalSlidingAttention(nn.Module):
         q = apply_rotary_emb(q, cos, sin)
         k = apply_rotary_emb(k, cos, sin)
         q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
+        if self.num_kv_heads != self.num_heads:
+            repeat = self.num_heads // self.num_kv_heads
+            k = k.repeat_interleave(repeat, dim=1)
+            v = v.repeat_interleave(repeat, dim=1)
 
         # Build sliding window causal mask: position j is visible from i iff i-window_size < j <= i
         if self.window_size < seqlen:
@@ -714,7 +718,6 @@ class LocalSlidingAttention(nn.Module):
             q, k, v,
             attn_mask=attn_mask,
             is_causal=(attn_mask is None),
-            enable_gqa=(self.num_kv_heads != self.num_heads),
         )
         y = y.transpose(1, 2).contiguous().reshape(bsz, seqlen, dim)
         return self.proj(y)
