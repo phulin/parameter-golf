@@ -81,6 +81,7 @@ class Hyperparameters:
     num_heads = int(os.environ.get("NUM_HEADS", 8))
     mlp_mult = int(os.environ.get("MLP_MULT", 2))
     gdn_ratio = int(os.environ.get("GDN_RATIO", 1))
+    use_short_conv = bool(int(os.environ.get("USE_SHORT_CONV", "1")))
     raw_bytes = bool(int(os.environ.get("RAW_BYTES", "0")))
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
@@ -752,6 +753,7 @@ class Block(nn.Module):
         rope_base: float,
         qk_gain_init: float,
         use_deltanet: bool = False,
+        use_short_conv: bool = True,
     ):
         super().__init__()
         self.use_deltanet = use_deltanet
@@ -766,7 +768,7 @@ class Block(nn.Module):
                 expand_v=mlp_mult,
                 mode="chunk",
                 use_gate=True,
-                use_short_conv=True,
+                use_short_conv=use_short_conv,
             )
         else:
             self.attn = CausalSelfAttention(
@@ -808,6 +810,7 @@ class GPT(nn.Module):
         num_kv_heads: int,
         mlp_mult: int,
         gdn_ratio: int,
+        use_short_conv: bool,
         tie_embeddings: bool,
         tied_embed_init_std: float,
         logit_softcap: float,
@@ -838,6 +841,7 @@ class GPT(nn.Module):
                     rope_base,
                     qk_gain_init,
                     use_deltanet=(i % (gdn_ratio + 1) < gdn_ratio),
+                    use_short_conv=use_short_conv,
                 )
                 for i in range(num_layers)
             ]
@@ -1310,6 +1314,7 @@ def main() -> None:
             num_kv_heads=args.num_kv_heads,
             mlp_mult=args.mlp_mult,
             gdn_ratio=args.gdn_ratio,
+            use_short_conv=args.use_short_conv,
             tie_embeddings=args.tie_embeddings,
             tied_embed_init_std=args.tied_embed_init_std,
             logit_softcap=args.logit_softcap,
