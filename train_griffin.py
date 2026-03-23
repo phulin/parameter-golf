@@ -100,7 +100,7 @@ class Hyperparameters:
     beta1 = float(os.environ.get("BETA1", 0.9))
     beta2 = float(os.environ.get("BETA2", 0.95))
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
-    grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.0))
+    grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 1.0))
 
     # TTT LoRA (applied only to local-attention blocks)
     ttt_lora_rank = int(os.environ.get("TTT_LORA_RANK", 8))
@@ -576,6 +576,30 @@ def restore_low_dim_params_to_fp32(module: nn.Module) -> None:
                 or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
             ) and param.dtype != torch.float32:
                 param.data = param.data.float()
+
+
+def sanitize_gradients(parameters) -> int:
+    nonfinite_count = 0
+    with torch.no_grad():
+        for param in parameters:
+            grad = param.grad
+            if grad is None:
+                continue
+            bad = ~torch.isfinite(grad)
+            if bad.any():
+                nonfinite_count += int(bad.sum().item())
+                grad.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
+    return nonfinite_count
+
+
+def count_nonfinite_parameters(parameters) -> int:
+    nonfinite_count = 0
+    with torch.no_grad():
+        for param in parameters:
+            bad = ~torch.isfinite(param)
+            if bad.any():
+                nonfinite_count += int(bad.sum().item())
+    return nonfinite_count
 
 
 class Rotary(nn.Module):
@@ -1601,10 +1625,20 @@ def main() -> None:
             for group in opt.param_groups:
                 group["lr"] = group["base_lr"] * scale
 
+        nonfinite_grads = sanitize_gradients(base_model.parameters())
+        if nonfinite_grads > 0:
+            log0(
+                f"step:{step} nonfinite_grads:{nonfinite_grads} action:sanitize_to_zero"
+            )
         if args.grad_clip_norm > 0:
             torch.nn.utils.clip_grad_norm_(base_model.parameters(), args.grad_clip_norm)
         for opt in optimizers:
             opt.step()
+        nonfinite_params = count_nonfinite_parameters(base_model.parameters())
+        if nonfinite_params > 0:
+            raise RuntimeError(
+                f"Non-finite parameters detected after optimizer step {step}: {nonfinite_params}"
+            )
         zero_grad_all()
 
         step += 1
