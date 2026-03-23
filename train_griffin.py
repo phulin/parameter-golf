@@ -511,6 +511,12 @@ class CastedLinear(nn.Linear):
         return F.linear(x, self.weight.to(x.dtype), bias)
 
 
+def lecun_normal_(tensor: Tensor) -> Tensor:
+    fan_in, _ = nn.init._calculate_fan_in_and_fan_out(tensor)
+    std = 1.0 / math.sqrt(max(fan_in, 1))
+    return nn.init.normal_(tensor, mean=0.0, std=std)
+
+
 def restore_low_dim_params_to_fp32(module: nn.Module) -> None:
     with torch.no_grad():
         for name, param in module.named_parameters():
@@ -585,6 +591,10 @@ class RGLRU(nn.Module):
         u = torch.empty(dim).uniform_(0.9, 0.999)
         a = u.pow(1.0 / c)
         self.lam.data = torch.log(a / (1.0 - a))
+        lecun_normal_(self.W_r.weight)
+        lecun_normal_(self.W_i.weight)
+        nn.init.zeros_(self.W_r.bias)
+        nn.init.zeros_(self.W_i.bias)
 
     def forward(self, x: Tensor) -> Tensor:
         # x: (B, T, D)
@@ -623,7 +633,7 @@ class RecurrentMixingBlock(nn.Module):
         self.in_proj_z = CastedLinear(model_dim, rnn_width, bias=False)  # temporal branch
         self.in_proj_g = CastedLinear(model_dim, rnn_width, bias=False)  # gate branch
         # Small depthwise temporal conv (kernel_size=4, causal padding)
-        self.conv = nn.Conv1d(rnn_width, rnn_width, kernel_size=4, groups=rnn_width, bias=True)
+        self.conv = nn.Conv1d(rnn_width, rnn_width, kernel_size=4, groups=rnn_width, bias=False)
         self.rglru = RGLRU(rnn_width, c=c)
         self.out_proj = CastedLinear(rnn_width, model_dim, bias=False)
         self.out_proj._zero_init = True
@@ -721,13 +731,8 @@ class GriffinBlock(nn.Module):
         self.mlp_norm = RMSNorm()
         self.temporal = temporal_layer
         self.mlp = GatedMLP(dim, mlp_expansion)
-        self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
-        self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
-        self.resid_mix = nn.Parameter(torch.stack((torch.ones(dim), torch.zeros(dim))).float())
 
-    def forward(self, x: Tensor, x0: Tensor, q_delta_fn=None, v_delta_fn=None) -> Tensor:
-        mix = self.resid_mix.to(dtype=x.dtype)
-        x = mix[0][None, None, :] * x + mix[1][None, None, :] * x0
+    def forward(self, x: Tensor, q_delta_fn=None, v_delta_fn=None) -> Tensor:
         n = self.temporal_norm(x)
         if q_delta_fn is not None or v_delta_fn is not None:
             qd = q_delta_fn(n) if q_delta_fn is not None else None
@@ -735,8 +740,8 @@ class GriffinBlock(nn.Module):
             t_out = self.temporal(n, qd, vd)
         else:
             t_out = self.temporal(n)
-        x = x + self.attn_scale.to(dtype=x.dtype)[None, None, :] * t_out
-        x = x + self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x))
+        x = x + t_out
+        x = x + self.mlp(self.mlp_norm(x))
         return x
 
 
@@ -770,10 +775,7 @@ class GriffinModel(nn.Module):
         self.logit_softcap = logit_softcap
 
         self.tok_emb = nn.Embedding(vocab_size, model_dim)
-        self.num_encoder_layers = num_layers // 2
-        self.num_decoder_layers = num_layers - self.num_encoder_layers
-        self.num_skip_weights = min(self.num_encoder_layers, self.num_decoder_layers)
-        self.skip_weights = nn.Parameter(torch.ones(self.num_skip_weights, model_dim, dtype=torch.float32))
+        self.skip_weights = nn.Parameter(torch.empty(0, model_dim, dtype=torch.float32))
 
         blocks = []
         for i in range(num_layers):
@@ -806,21 +808,10 @@ class GriffinModel(nn.Module):
     def forward(self, input_ids: Tensor, target_ids: Tensor, lora=None) -> Tensor:
         x = self.tok_emb(input_ids)
         x = F.rms_norm(x, (x.size(-1),))
-        x0 = x
-        skips: list[Tensor] = []
-
-        for i in range(self.num_encoder_layers):
+        for i, block in enumerate(self.blocks):
             qd = lora.q_loras[i] if lora else None
             vd = lora.v_loras[i] if lora else None
-            x = self.blocks[i](x, x0, qd, vd)
-            skips.append(x)
-        for i in range(self.num_decoder_layers):
-            bi = self.num_encoder_layers + i
-            if skips:
-                x = x + self.skip_weights[i].to(dtype=x.dtype)[None, None, :] * skips.pop()
-            qd = lora.q_loras[bi] if lora else None
-            vd = lora.v_loras[bi] if lora else None
-            x = self.blocks[bi](x, x0, qd, vd)
+            x = block(x, qd, vd)
 
         x = self.final_norm(x)
         if self.tie_embeddings:
