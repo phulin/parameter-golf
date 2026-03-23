@@ -697,7 +697,6 @@ def _rglru_scan(a: Tensor, b: Tensor) -> Tensor:
     return b[:, :T]
 
 
-@torch._dynamo.disable
 def _build_local_block_mask(
     window_size: int, num_heads: int, seqlen: int, device: torch.device
 ) -> BlockMask:
@@ -781,20 +780,12 @@ class LocalSlidingAttention(nn.Module):
             torch.full((num_heads,), qk_gain_init, dtype=torch.float32)
         )
         self.rotary = Rotary(self.head_dim, base=rope_base)
-        self._block_mask_cache: dict[tuple[str, int, int], BlockMask] = {}
+        self._block_mask: BlockMask | None = None  # set by warmup_block_mask() before compile
 
-    def _get_block_mask(self, seqlen: int, device: torch.device) -> BlockMask:
-        dev_key = (
-            f"{device.type}:{device.index}" if device.index is not None else device.type
+    def warmup_block_mask(self, seqlen: int, device: torch.device) -> None:
+        self._block_mask = _build_local_block_mask(
+            self.window_size, self.num_heads, seqlen, device
         )
-        key = (dev_key, seqlen, self.window_size)
-        block_mask = self._block_mask_cache.get(key)
-        if block_mask is None:
-            block_mask = _build_local_block_mask(
-                self.window_size, self.num_heads, seqlen, device
-            )
-            self._block_mask_cache[key] = block_mask
-        return block_mask
 
     def forward(self, x: Tensor, q_delta=None, v_delta=None) -> Tensor:
         bsz, seqlen, dim = x.shape
@@ -815,8 +806,7 @@ class LocalSlidingAttention(nn.Module):
             k = k.repeat_interleave(repeat, dim=1)
             v = v.repeat_interleave(repeat, dim=1)
         if x.is_cuda:
-            block_mask = self._get_block_mask(seqlen, x.device)
-            y = flex_attention(q, k, v, block_mask=block_mask)
+            y = flex_attention(q, k, v, block_mask=self._block_mask)
         else:
             # CPU fallback for simple smoke tests.
             if self.window_size < seqlen:
@@ -1343,6 +1333,9 @@ def main() -> None:
         if isinstance(module, Rotary):
             module.inv_freq.data = module.inv_freq.data.float()
     restore_low_dim_params_to_fp32(base_model)
+    for module in base_model.modules():
+        if isinstance(module, LocalSlidingAttention):
+            module.warmup_block_mask(args.train_seq_len, device)
     compiled_model = torch.compile(base_model, dynamic=False, fullgraph=True)
     model: nn.Module = (
         DDP(compiled_model, device_ids=[local_rank], broadcast_buffers=False)
