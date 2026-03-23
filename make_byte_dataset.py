@@ -24,6 +24,7 @@ DEFAULT_SRC = "./data/datasets/fineweb10B_sp1024"
 DEFAULT_DST = "./data/datasets/fineweb10B_bytes"
 DEFAULT_TOKENIZER = "./data/tokenizers/fineweb_1024_bpe.model"
 
+
 def convert_shard(
     src: Path, dst: Path, sp: spm.SentencePieceProcessor
 ) -> tuple[int, int]:
@@ -43,12 +44,14 @@ def convert_shard(
 
     # Split on BOS boundaries and batch-decode the whole shard at once.
     doc_arrays = np.split(tokens, bos_positions[1:])
-    doc_token_lists = [arr[1:] for arr in doc_arrays]
+    doc_token_lists = [arr[1:].tolist() for arr in doc_arrays]
     texts: list[str] = sp.decode(doc_token_lists)
 
     out_bytes = b"".join(b"\x01" + t.encode("utf-8") for t in texts)
     dst.write_bytes(out_bytes)
     return len(bos_positions), len(out_bytes)
+
+
 def main() -> None:
     src_dir = Path(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SRC)
     dst_dir = Path(sys.argv[2] if len(sys.argv) > 2 else DEFAULT_DST)
