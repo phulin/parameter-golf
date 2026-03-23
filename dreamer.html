@@ -1,59 +1,47 @@
-logo Back to arXiv <https://arxiv.org/>
-<https://arxiv.org/abs/2601.21582>
+logo Back to arXiv <https:></https:>
+<https:>
+<javascript:togglecolorscheme()>
 
-<javascript:toggleColorScheme()>
-
-logo Back to arXiv <https://arxiv.org/>
+logo Back to arXiv <https:></https:>
 
 This is *experimental HTML* to improve accessibility. We invite you to
 report rendering errors. Use Alt+Y to toggle on accessible reporting
 links and Alt+Shift+Y to toggle off. Learn more about this project
-<https://info.arxiv.org/about/accessible_HTML.html> and help improve
-conversions <https://info.arxiv.org/help/submit_latex_best_practices.html>.
+<https:> and help improve
+conversions <https:>.
 
-Why HTML? <https://info.arxiv.org/about/accessible_HTML.html> Report
-Issue <#myForm> Back to Abstract <https://arxiv.org/abs/2601.21582v1>
-Download PDF <https://arxiv.org/pdf/2601.21582v1>
-
-<javascript:toggleColorScheme()>
+Why HTML? <https:> Report
+Issue &lt;#myForm&gt; Back to Abstract <https:>
+Download PDF <https:>
+<javascript:togglecolorscheme()>
 
 
 Table of Contents
 
- 1. Abstract <https://arxiv.org/html/2601.21582#abstract>
- 2. 1 Introduction <https://arxiv.org/html/2601.21582v1#S1>
- 3. 2 Related Work <https://arxiv.org/html/2601.21582v1#S2>
- 4. 3 Methods <https://arxiv.org/html/2601.21582v1#S3>
-     1. 3.1 Overview: Depth-Recurrent Attention Mixture <https://
-        arxiv.org/html/2601.21582v1#S3.SS1>
-     2. 3.2 Background: Attention <https://arxiv.org/
-        html/2601.21582v1#S3.SS2>
-     3. 3.3 Sequence Attention (SA) <https://arxiv.org/
-        html/2601.21582v1#S3.SS3>
-     4. 3.4 Depth Attention (DA) <https://arxiv.org/
-        html/2601.21582v1#S3.SS4>
-     5. 3.5 Expert Attention (EA) <https://arxiv.org/
-        html/2601.21582v1#S3.SS5>
-     6. 3.6 Attention Mixture <https://arxiv.org/html/2601.21582v1#S3.SS6>
-     7. 3.7 Depth Recurrence (DR) <https://arxiv.org/
-        html/2601.21582v1#S3.SS7>
-     8. 3.8 FLOP- and Parameter-Matching <https://arxiv.org/
-        html/2601.21582v1#S3.SS8>
- 5. 4 Experiments <https://arxiv.org/html/2601.21582v1#S4>
-     1. 4.1 Reasoning and Language Modeling <https://arxiv.org/
-        html/2601.21582v1#S4.SS1>
-     2. 4.2 Analyzing Depth Attention and Expert Attention <https://
-        arxiv.org/html/2601.21582v1#S4.SS2>
- 6. 5 Discussion and Future Work <https://arxiv.org/html/2601.21582v1#S5>
- 7. 6 Conclusion <https://arxiv.org/html/2601.21582v1#S6>
- 8. 7 Acknowledgments <https://arxiv.org/html/2601.21582v1#S7>
- 9. 8 Broader Impact Statement <https://arxiv.org/html/2601.21582v1#S8>
-10. A Experiment Details <https://arxiv.org/html/2601.21582v1#A1>
-11. B Further Analysis <https://arxiv.org/html/2601.21582v1#A2>
-12. References <https://arxiv.org/html/2601.21582#bib>
+ 1. Abstract <https:>
+ 2. 1 Introduction <https:>
+ 3. 2 Related Work <https:>
+ 4. 3 Methods <https:>
+     1. 3.1 Overview: Depth-Recurrent Attention Mixture <https:>
+     2. 3.2 Background: Attention <https:>
+     3. 3.3 Sequence Attention (SA) <https:>
+     4. 3.4 Depth Attention (DA) <https:>
+     5. 3.5 Expert Attention (EA) <https:>
+     6. 3.6 Attention Mixture <https:>
+     7. 3.7 Depth Recurrence (DR) <https:>
+     8. 3.8 FLOP- and Parameter-Matching <https:>
+ 5. 4 Experiments <https:>
+     1. 4.1 Reasoning and Language Modeling <https:>
+     2. 4.2 Analyzing Depth Attention and Expert Attention <https:>
+ 6. 5 Discussion and Future Work <https:>
+ 7. 6 Conclusion <https:>
+ 8. 7 Acknowledgments <https:>
+ 9. 8 Broader Impact Statement <https:>
+10. A Experiment Details <https:>
+11. B Further Analysis <https:>
+12. References <https:>
 
-License: CC BY 4.0 <https://info.arxiv.org/help/license/
-index.html#licenses-available>
+License: CC BY 4.0 <https:>
 arXiv:2601.21582v1 [cs.AI] 29 Jan 2026
 
 
@@ -112,9 +100,7 @@ keeping the model and its parameter count unchanged. This allows open-
 ended many-step reasoning in latent space along the depth dimension,
 offering an alternative to traditional CoT. “Latent CoT” in continuous
 space can increase reasoning efficiency, leveraging expressivity beyond
-natural language (Zhuet al., 2025a <https://arxiv.org/
-html/2601.21582v1#bib.bib1>; Haoet al., 2024 <https://arxiv.org/
-html/2601.21582v1#bib.bib2>). Additionally, knowledge reuse across
+natural language (Zhuet al., 2025a <https:>; Haoet al., 2024 <https:>). Additionally, knowledge reuse across
 depths may improve parameter efficiency and compositional
 generalization, a crucial property for out-of-distribution performance.
 
@@ -193,40 +179,31 @@ Report issue for preceding element
 Report issue for preceding element
 
 Depth Recurrence and Parameter Sharing across Depth: Depth-recurrent
-(DR) Transformers are introduced by Dehghaniet al. (2018 <https://
-arxiv.org/html/2601.21582v1#bib.bib3>) While laying the groundwork, they
+(DR) Transformers are introduced by Dehghaniet al. (2018 <https:>) While laying the groundwork, they
 miss FLOP-matched tests and use a dense DR core, making scaling
 intractable. To address the scalability bottleneck of dense DR, Tanet
-al. (2023 <https://arxiv.org/html/2601.21582v1#bib.bib4>) investigates
+al. (2023 <https:>) investigates
 DR with sparse MoEs. However, they still lack FLOP-matching and testing
-of natural language reasoning. Csordáset al. (2024 <https://arxiv.org/
-html/2601.21582v1#bib.bib5>) perform more rigorous and scaled
+of natural language reasoning. Csordáset al. (2024 <https:>) perform more rigorous and scaled
 experiments with sparse DR, showing slight benefits of DR. However, they
 lack sparse baselines for fair comparisons. Moreover, they rely on
 multi-layer DR cores, in contrast to our minimal, modular single-layer
-architecture. Baiet al. (2022 <https://arxiv.org/
-html/2601.21582v1#bib.bib6>); Tanet al. (2025 <https://arxiv.org/
-html/2601.21582v1#bib.bib7>); Liet al. (2025 <https://arxiv.org/
-html/2601.21582v1#bib.bib8>) investigates the reuse of MoE experts
+architecture. Baiet al. (2022 <https:>); Tanet al. (2025 <https:>); Liet al. (2025 <https:>) investigates the reuse of MoE experts
 across (some adjacent) depths, thus resembling a form of partial/block-
 wise DR with MoEs. However, the partial DR prevents depth-generalized
 and open-ended latent reasoning. The same limitation applies to work of
-Baeet al. (2025 <https://arxiv.org/html/2601.21582v1#bib.bib9>),
+Baeet al. (2025 <https:>),
 exploring DR with depth-specific LoRA-adapters as relaxation. In 2025,
 we saw a surge of work on DR, for natural language reasoning (Saunshiet
-al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib10>; Geipinget
-al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib11>; Koishekenovet
-al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib12>; Wuet al.,
-2025 <https://arxiv.org/html/2601.21582v1#bib.bib13>; Zhuet al., 2025b
-<https://arxiv.org/html/2601.21582v1#bib.bib14>; McLeishet al., 2025
-<https://arxiv.org/html/2601.21582v1#bib.bib15>) and small models for
-symbolic problems (Darlowet al., 2025 <https://arxiv.org/
-html/2601.21582v1#bib.bib16>; Wanget al., 2025a <https://arxiv.org/
-html/2601.21582v1#bib.bib17>; Jolicoeur-Martineau, 2025 <https://
-arxiv.org/html/2601.21582v1#bib.bib18>). Despite the intractability of
+al., 2025 <https:>; Geipinget
+al., 2025 <https:>; Koishekenovet
+al., 2025 <https:>; Wuet al.,
+2025 <https:>; Zhuet al., 2025b
+<https:>; McLeishet al., 2025
+<https:>) and small models for
+symbolic problems (Darlowet al., 2025 <https:>; Wanget al., 2025a <https:>; Jolicoeur-Martineau, 2025 <https:>). Despite the intractability of
 scaling dense DR, most of these works use dense models. Moreover, as
-proposed by Geipinget al. (2025 <https://arxiv.org/
-html/2601.21582v1#bib.bib11>), many of them, especially for natural
+proposed by Geipinget al. (2025 <https:>), many of them, especially for natural
 language, use dedicated encoders/decoders around the DR core. In
 contrast, we show that purely a single-layer DR core is sufficient. It
 can learn such dedicated roles of encoding/decoding on its own if
@@ -242,12 +219,11 @@ bottleneck and dense layer-size bottleneck.
 
 Report issue for preceding element
 
-Other Latent Reasoning Approaches: Jaegleet al. (2021 <https://
-arxiv.org/html/2601.21582v1#bib.bib19>) decouples input and latent
+Other Latent Reasoning Approaches: Jaegleet al. (2021 <https:>) decouples input and latent
 reasoning dimensions by cross-attending to the input sequence from a
 latent, recurrent dimension. However, training is not naively
 parallelizable across the output sequence. As another alternative, Haoet
-al. (2024 <https://arxiv.org/html/2601.21582v1#bib.bib2>) generates
+al. (2024 <https:>) generates
 continuous latent tokens between discrete I/O tokens in the sequence
 dimension. However, this neither supports naive sequence-parallel
 training nor leverages knowledge-reuse across depths. Moreover, latent
@@ -260,17 +236,15 @@ while still supporting sequence-parallel training.
 Report issue for preceding element
 
 Depth Attention and Skip Connections: As precursor to depth attention
-(DA), Huanget al. (2017 <https://arxiv.org/html/2601.21582v1#bib.bib20>)
+(DA), Huanget al. (2017 <https:>)
 explores skip connections between all layers, although only for shallow
 convolution networks for vision. A different approach by Pagliardiniet
-al. (2024 <https://arxiv.org/html/2601.21582v1#bib.bib21>) averages
+al. (2024 <https:>) averages
 hidden-states from previous layers, weighted by fixed learned weights.
-Xiaoet al. (2025 <https://arxiv.org/html/2601.21582v1#bib.bib22>)
+Xiaoet al. (2025 <https:>)
 computes dynamic weights for such an aggregation via an MLP. All these
 methods still do not resemble proper dot-product attention along the
-depth. In contrast, Fanget al. (2023 <https://arxiv.org/
-html/2601.21582v1#bib.bib23>) and Clasteret al. (2025 <https://
-arxiv.org/html/2601.21582v1#bib.bib24>) do use such proper DA. However,
+depth. In contrast, Fanget al. (2023 <https:>) and Clasteret al. (2025 <https:>) do use such proper DA. However,
 they only explore small models for vision, time-series, or sentiment
 analysis. Moreover, these works do not provide tightly FLOP-,
 parameter-, and memory-matched ablations by compensating for the small
@@ -300,9 +274,8 @@ dimensions: sequence, depth, and experts. In our case, (only) the expert
 attention is sparse. The resulting layer is applied repeatedly, building
 up the depth, to facilitate latent recurrent reasoning, knowledge
 sharing across depths, and thus compositional generalization. Figure 1
-<https://arxiv.org/html/2601.21582v1#S1.F1> depicts a high-level view
-over the architecture. Figure 2 <https://arxiv.org/
-html/2601.21582v1#S3.F2> shows the relation of queries, keys, and values
+<https:> depicts a high-level view
+over the architecture. Figure 2 <https:> shows the relation of queries, keys, and values
 by unfolding sequence and depth dimensions.
 
 Report issue for preceding element
@@ -325,7 +298,7 @@ Report issue for preceding element
 Report issue for preceding element
 
 The (single-head) self-attention of Transformers (Vaswaniet al., 2017
-<https://arxiv.org/html/2601.21582v1#bib.bib25>) aggregates values VV
+<https:>) aggregates values VV
 [m,v][m,v] via scaled dot-product between queries QQ [m,k][m,k] and keys
 KK [m,k][m,k]:
 
@@ -336,9 +309,8 @@ Report issue for preceding element
 By default, the activation function σ\sigma is defined as
 softmax\operatorname{softmax} with upper triangular mask for causal
 attention. The generalization to multi-head (Vaswaniet al., 2017
-<https://arxiv.org/html/2601.21582v1#bib.bib25>) and grouped-query
-attention (Ainslieet al., 2023 <https://arxiv.org/
-html/2601.21582v1#bib.bib26>) applies as usual.
+<https:>) and grouped-query
+attention (Ainslieet al., 2023 <https:>) applies as usual.
 
 Report issue for preceding element
 
@@ -352,9 +324,8 @@ operates along the sequence dimension (i.e. Attn\operatorname{Attn}’s
 m≡m\equiv sequence length). We therefore call it sequence attention
 (SA), to disambiguate our attention variants. QQ, KK, and VV are
 projected from normalized hidden-states. In our case, QQ and KK are
-position-encoded via RoPE (Suet al., 2024 <https://arxiv.org/
-html/2601.21582v1#bib.bib27>) and normalized via RMSNorm (Zhang and
-Sennrich, 2019 <https://arxiv.org/html/2601.21582v1#bib.bib28>).
+position-encoded via RoPE (Suet al., 2024 <https:>) and normalized via RMSNorm (Zhang and
+Sennrich, 2019 <https:>).
 
 Report issue for preceding element
 
@@ -375,15 +346,13 @@ Report issue for preceding element
 
 We can implement DA by treating the sequence as batch and the depth as
 sequence dimension. With a key-value cache and PyTorch, a basic
-implementation may look like in Algorithm 1 <https://arxiv.org/
-html/2601.21582v1#alg1>. This allows leveraging existing optimized
+implementation may look like in Algorithm 1 <https:>. This allows leveraging existing optimized
 attention implementations for DA.
 
 Report issue for preceding element
 Algorithm 1 Depth Attention
 
-⬇ <data:text/
-plain;base64,YixzLGggPSB4LnNoYXBlCnggPSB4LnZpZXcoYipzLDEsaCkgICAjIG1lcmdlIHNlcSB0byBiYXRjaCwKICAgICAgICAgICAgICAgICAgICAgICAgY3JlYXRlIGRlcHRoIGRpbQp5ID0gYXR0bih4LGt2X2NhY2hlKSAgIyBhdHRlbnRpb24gYXMgdXN1YWwKeSA9IHkudmlldyhiLHMsaCkgICAgICMgcmVjb3ZlciBzZXEgZGlt>
+⬇ <data:text>
 b,s,h=x.shape
 x=x.view(b*s,1,h)#mergeseqtobatch,
 createdepthdim
@@ -429,8 +398,7 @@ To efficiently scale the (depth-recurrent) layer, we use sparse
 attention scores, resulting in a sparse MoEs, i.e. only a subset of
 experts have to be executed. Since sparsity introduces non-
 differentiability and balancing challenges, we leverage routing and
-balancing strategies similar to DeepSeek-V3 (Liuet al., 2024 <https://
-arxiv.org/html/2601.21582v1#bib.bib29>). Accordingly, we define the
+balancing strategies similar to DeepSeek-V3 (Liuet al., 2024 <https:>). Accordingly, we define the
 attention activation function of EA as
 
 Report issue for preceding element
@@ -500,14 +468,13 @@ In small tests at the scale of ca. 1B parameters, each additional
 parallelization yielded ca. 15% speedup at the cost of up to 10–20%
 higher benchmark error rates. For larger models, the tradeoff might
 improve and be worth it. But in this work, we follow Equation 5
-<https://arxiv.org/html/2601.21582v1#S3.E5>.
+<https:>.
 
 Report issue for preceding element
 
 The concept of attention mixtures as general foundation is modular and
 extensible. Depending on the application, different attention dimensions
-may be added. Some possibilities are mentioned in Section 5 <https://
-arxiv.org/html/2601.21582v1#S5>.
+may be added. Some possibilities are mentioned in Section 5 <https:>.
 
 Report issue for preceding element
 
@@ -533,8 +500,7 @@ query/key/value projection and each multi-head attention aggregation
 into a lightweight, sparse MoE, similar to EA. The attention scores are
 tied between the two MoEs, which reduces routing overhead and stabilizes
 training. Balancing and routing work analogously to the MLP-EA
-(Equations 2 <https://arxiv.org/html/2601.21582v1#S3.E2> and 3 <https://
-arxiv.org/html/2601.21582v1#S3.E3>). However, here for the attention
+(Equations 2 <https:> and 3 <https:>). However, here for the attention
 MoEs, we use linear experts WW, to further reduce compute costs and
 improve stability during training. Moreover, we only select the top-1
 expert, and thus do not apply score normalization.
@@ -587,8 +553,7 @@ FLOPs. After the second FLOP-matching, the hyperparameter optimization
 loop converges. As a result of our tight FLOP-matching, the slight
 compute overhead of DR’s larger number of experts per depth as well as
 the compute overhead of DA are compensated fairly, yielding a meaningful
-comparison with similar resource requirements (Table 1 <https://
-arxiv.org/html/2601.21582v1#S3.T1>).
+comparison with similar resource requirements (Table 1 <https:>).
 
 Report issue for preceding element
 Table 1: Model resource requirements. Average FLOPs per token and total
@@ -676,19 +641,17 @@ matching. To get isolated ablations of DR and DA, we keep the
 architectural differences to a minimum and use the same hyperparameters
 across models of the same depth. Exceptions are the MLP intermediate
 sizes and the number of experts for EA, which are adjusted for FLOP- and
-parameter-matching as described in Section 3.8 <https://arxiv.org/
-html/2601.21582v1#S3.SS8>. Detailed hyperparameters for reproduction are
-listed in Table 3 <https://arxiv.org/html/2601.21582v1#A1.T3>. The
+parameter-matching as described in Section 3.8 <https:>. Detailed hyperparameters for reproduction are
+listed in Table 3 <https:>. The
 resulting resource requirements of all models are shown in Table 1
-<https://arxiv.org/html/2601.21582v1#S3.T1>. As intended, our FLOP- and
+<https:>. As intended, our FLOP- and
 parameter-matching results in tight alignment of FLOPs, parameter
 counts, and memory usage across all models of the same depth.
 
 Report issue for preceding element
 
 As training data, we use ca. 100B tokens from a mix of openly available
-instruction datasets (Table 4 <https://arxiv.org/
-html/2601.21582v1#A1.T4>). We perform cleaning, deduplication, and
+instruction datasets (Table 4 <https:>). We perform cleaning, deduplication, and
 decontamination. CoT traces are removed, since (i) we aim for latent
 reasoning instead, and (ii) the available CoT traces are often very long
 and have a low signal-to-noise ratio. Even without CoT traces, the
@@ -709,18 +672,13 @@ Report issue for preceding element
 We test reasoning accuracy on common natural language math benchmarks
 and on a math-focused subset of MMLU (abstract_algebra,
 elementary_mathematics, high_school_mathematics, college_mathematics,
-high_school_statistics) (Cobbeet al., 2021 <https://arxiv.org/
-html/2601.21582v1#bib.bib30>; Hendryckset al., 2021b <https://arxiv.org/
-html/2601.21582v1#bib.bib31>, a <https://arxiv.org/
-html/2601.21582v1#bib.bib32>; Aminiet al., 2019 <https://arxiv.org/
-html/2601.21582v1#bib.bib33>). And we test language modeling on Maths-
-College (ajibawa-2023/Maths-College <https://huggingface.co/datasets/
-ajibawa-2023/Maths-College>), educational math texts.
+high_school_statistics) (Cobbeet al., 2021 <https:>; Hendryckset al., 2021b <https:>, a <https:>; Aminiet al., 2019 <https:>). And we test language modeling on Maths-
+College (ajibawa-2023/Maths-College <https:>), educational math texts.
 
 Report issue for preceding element
 
-Table 2 <https://arxiv.org/html/2601.21582v1#S4.T2> and Figure 3
-<https://arxiv.org/html/2601.21582v1#S4.F3> show a strong benefit of
+Table 2 <https:> and Figure 3
+<https:> show a strong benefit of
 both DR and DR+DA over the classically layered baseline (LA) at all
 scales and tests. DR+DA with depth 16 even outperforms LA with depth 32
 in all reasoning benchmarks (contrary to pure DR). This means nearly a
@@ -739,8 +697,7 @@ more from the hidden-size bottleneck, since more information accumulated
 across depths. Hence, DA is particularly effective for improving the
 scaling behavior. However, more rigorous scaling laws are still needed
 and left for future work. Further considerations about DA, including
-variations, are discussed in Section 5 <https://arxiv.org/
-html/2601.21582v1#S5>.
+variations, are discussed in Section 5 <https:>.
 
 Report issue for preceding element
 
@@ -759,8 +716,7 @@ uniform skip-connections.
 Report issue for preceding element
 
 We collect statistics of the DR+DA model with depth 32 over 1000 random
-sequences from our validation data. Figure 4 <https://arxiv.org/
-html/2601.21582v1#S4.F4> shows the average attention scores of DA. While
+sequences from our validation data. Figure 4 <https:> shows the average attention scores of DA. While
 being only a superficial perspective, it reveals nontrivial patterns.
 Early depths typically look back to the first few depths, followed by
 more diverse DA patterns, after which middle depths are recalled. In the
@@ -785,7 +741,7 @@ specialized experts. Ca. 50% of experts are widely depth-generalized.
 Report issue for preceding element
 
 We investigate the EA behavior, showing the distribution of depths per
-expert in Figure 5 <https://arxiv.org/html/2601.21582v1#S4.F5>. Since
+expert in Figure 5 <https:>. Since
 experts have no inherent order, we first group and sort them by the
 number of depths in the top 90th percentile of their depth distribution,
 P​(depth|expert)P(\text{depth}|\text{expert}). This effectively sorts
@@ -797,16 +753,16 @@ implications for model design. Depths ≥\geq50% use almost all of the
 highly depth-specialized experts. This results in ca. 22% of experts
 preferring one or two depths ≥\geq50%. In particular, the last depth
 owns the most experts dedicated to a single depth. Hence, one may model
-this behavior via a decoding layer. In contrast, depths <<50% use more
+this behavior via a decoding layer. In contrast, depths &lt;&lt;50% use more
 depth-generalized than -specialized experts. Almost no experts are
-dedicated to one or two depths <<50%. Hence, for these depths, the rigid
+dedicated to one or two depths &lt;&lt;50%. Hence, for these depths, the rigid
 layer separation of traditional models is most restrictive. We further
 observe that most experts with only two or three depths distribute their
 usage across adjacent depths (±1\pm 1). Hence, they are not fully depth-
 generalized. A sliding window over experts, or a hierarchical expert
 subset selection, could model this patterns while reducing routing
 costs. Finally, we see that ca. 50% of experts are each used in at least
-7 depths (i.e. >>20% of depths). This indicates knowledge reuse and
+7 depths (i.e. &gt;&gt;20% of depths). This indicates knowledge reuse and
 depth-generalization beyond just adjacent depths. Therefore, the model
 makes heavy use of the extended flexibility of DR. Hence, to facilitate
 such behavior, at least a subset of experts should be selectable from
@@ -826,8 +782,7 @@ experts per depth than LA, while global expert balancing remains strong
 
 Report issue for preceding element
 
-To further quantify the expert usage per depth, in Figure 6 <https://
-arxiv.org/html/2601.21582v1#S4.F6>, we relate each portion of expert
+To further quantify the expert usage per depth, in Figure 6 <https:>, we relate each portion of expert
 activations (i.e. how many expert routings occurred) to the portion of
 total experts activated (i.e. how many experts were used). The plot
 therefore represents Lorenz curves (per depth and globally). A perfect
@@ -905,8 +860,7 @@ perspective may help understanding and controlling model behavior.
 Moreover, while our work focused on the three specific dimensions, the
 proposed notion of attention mixtures is a generic, modular framework.
 For instance, sparse EA may be extended or replaced by parameter
-attention (Wanget al., 2025b <https://arxiv.org/
-html/2601.21582v1#bib.bib34>), and additional knowledge (learned latents
+attention (Wanget al., 2025b <https:>), and additional knowledge (learned latents
 or text embeddings) may be plugged in as separate attention dimension,
 resembling “in-depth” latent RAG. As the number of attention dimensions
 increases, the described parallel attention mixture variant may then be
@@ -1005,7 +959,7 @@ Report issue for preceding element
     GQA: Training Generalized Multi-Query Transformer Models from Multi-
     Head Checkpoints. In Proceedings of the 2023 Conference on Empirical
     Methods in Natural Language Processing, pp. 4895–4901. Cited by:
-    §3.2 <https://arxiv.org/html/2601.21582v1#S3.SS2.p1.8>.
+    §3.2 <https:>.
   * A. Amini, S. Gabriel, S. Lin, R. Koncel-Kedziorski, Y. Choi, and H.
     Hajishirzi (2019)
     ↑
@@ -1014,153 +968,140 @@ Report issue for preceding element
     operation-based formalisms. In Proceedings of the 2019 Conference of
     the North American Chapter of the Association for Computational
     Linguistics: Human Language Technologies, pp. 2357–2367. Cited by:
-    §4.1 <https://arxiv.org/html/2601.21582v1#S4.SS1.p5.1>.
+    §4.1 <https:>.
   * S. Bae, A. Fisch, H. Harutyunyan, Z. Ji, S. Kim, and T. Schuster (2025)
     ↑
 
     Relaxed recursive transformers: Effective parameter sharing with
     layer-wise LoRA. In International Conference on Learning
-    Representations, Cited by: §2 <https://arxiv.org/
-    html/2601.21582v1#S2.p1.1>.
+    Representations, Cited by: §2 <https:>.
   * Y. Bai, J. Li, W. Han, H. Ni, K. Xu, Z. Zhang, C. Yi, and X. Wang (2022)
     ↑
 
     Parameter-Efficient Conformers via Sharing Sparsely-Gated Experts
     for End-to-End Speech Recognition. In Proc. Interspeech 2022,
-    pp. 1676–1680. Cited by: §2 <https://arxiv.org/
-    html/2601.21582v1#S2.p1.1>.
+    pp. 1676–1680. Cited by: §2 <https:>.
   * A. Basant, A. Khairnar, A. Paithankar, A. Khattar, A. Renduchintala,
     A. Malte, A. Bercovich, A. Hazare, A. Rico, A. Ficek, et al. (2025)
     ↑
 
     Nvidia nemotron nano 2: An accurate and efficient hybrid mamba-
     transformer reasoning model. arXiv preprint arXiv:2508.14444. Cited
-    by: Table 4 <https://arxiv.org/html/2601.21582v1#A1.T4.4.17.16.2>.
+    by: Table 4 <https:>.
   * W. Claster, S. KM, and D. Gundechia (2025)
     ↑
 
     Adaptive integrated layered attention (AILA). arXiv preprint
-    arXiv:2503.22742. Cited by: §2 <https://arxiv.org/
-    html/2601.21582v1#S2.p3.1>.
+    arXiv:2503.22742. Cited by: §2 <https:>.
   * K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M.
     Plappert, J. Tworek, J. Hilton, R. Nakano, et al. (2021)
     ↑
 
     Training verifiers to solve math word problems. arXiv preprint
-    arXiv:2110.14168. Cited by: Table 4 <https://arxiv.org/
-    html/2601.21582v1#A1.T4.4.8.7.2>, §4.1 <https://arxiv.org/
-    html/2601.21582v1#S4.SS1.p5.1>.
+    arXiv:2110.14168. Cited by: Table 4 <https:>, §4.1 <https:>.
   * R. Csordás, K. Irie, J. Schmidhuber, C. Potts, and C. D. Manning (2024)
     ↑
 
     Moeut: Mixture-of-experts universal transformers. Advances in Neural
     Information Processing Systems 37, pp. 28589–28614. Cited by: §2
-    <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+    <https:>.
   * L. Darlow, C. Regan, S. Risi, J. Seely, and L. Jones (2025)
     ↑
 
     Continuous thought machines. arXiv preprint arXiv:2505.05522. Cited
-    by: §2 <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+    by: §2 <https:>.
   * M. Dehghani, S. Gouws, O. Vinyals, J. Uszkoreit, and Ł. Kaiser (2018)
     ↑
 
     Universal transformers. arXiv preprint arXiv:1807.03819. Cited by:
-    §2 <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+    §2 <https:>.
   * Y. Fang, Y. Cai, J. Chen, J. Zhao, G. Tian, and G. Li (2023)
     ↑
 
     Cross-layer retrospective retrieving via layer attention. In
     International Conference on Learning Representations, Cited by: §2
-    <https://arxiv.org/html/2601.21582v1#S2.p3.1>.
+    <https:>.
   * J. Geiping, S. McLeish, N. Jain, J. Kirchenbauer, S. Singh, B. R.
     Bartoldson, B. Kailkhura, A. Bhatele, and T. Goldstein (2025)
     ↑
 
     Scaling up test-time compute with latent reasoning: A recurrent
     depth approach. arXiv preprint arXiv:2502.05171. Cited by: §2
-    <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+    <https:>.
   * E. Guha, R. Marten, S. Keh, N. Raoof, G. Smyrnis, H. Bansal, M.
     Nezhurina, J. Mercat, T. Vu, Z. Sprague, et al. (2025)
     ↑
 
     OpenThoughts: Data recipes for reasoning models. arXiv preprint
-    arXiv:2506.04178. Cited by: Table 4 <https://arxiv.org/
-    html/2601.21582v1#A1.T4.4.10.9.2>.
+    arXiv:2506.04178. Cited by: Table 4 <https:>.
   * S. Hao, S. Sukhbaatar, D. Su, X. Li, Z. Hu, J. Weston, and Y. Tian
     (2024)
     ↑
 
     Training large language models to reason in a continuous latent
-    space. arXiv preprint arXiv:2412.06769. Cited by: §1 <https://
-    arxiv.org/html/2601.21582v1#S1.p2.1>, §2 <https://arxiv.org/
-    html/2601.21582v1#S2.p2.1>.
+    space. arXiv preprint arXiv:2412.06769. Cited by: §1 <https:>, §2 <https:>.
   * Z. He, T. Liang, J. Xu, Q. Liu, X. Chen, Y. Wang, L. Song, D. Yu, Z.
     Liang, W. Wang, et al. (2025)
     ↑
 
     Deepmath-103k: A large-scale, challenging, decontaminated, and
     verifiable mathematical dataset for advancing reasoning. arXiv
-    preprint arXiv:2504.11456. Cited by: Table 4 <https://arxiv.org/
-    html/2601.21582v1#A1.T4.4.15.14.2>.
+    preprint arXiv:2504.11456. Cited by: Table 4 <https:>.
   * D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and
     J. Steinhardt (2021a)
     ↑
 
     Measuring massive multitask language understanding. In International
-    Conference on Learning Representations, Cited by: §4.1 <https://
-    arxiv.org/html/2601.21582v1#S4.SS1.p5.1>.
+    Conference on Learning Representations, Cited by: §4.1 <https:>.
   * D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang,
     D. Song, and J. Steinhardt (2021b)
     ↑
 
     Measuring mathematical problem solving with the MATH dataset.
     Advances in neural information processing systems. Cited by: Table 4
-    <https://arxiv.org/html/2601.21582v1#A1.T4.4.2.1.2>, §4.1 <https://
-    arxiv.org/html/2601.21582v1#S4.SS1.p5.1>.
+    <https:>, §4.1 <https:>.
   * A. Hochlehnert, H. Bhatnagar, V. Udandarao, A. Prabhu, and M. Bethge
     (2025)
     ↑
 
     CuratedThoughts: Data curation for RL training datasets. Note:
     https://hugging-face.co/datasets/bethgelab/CuratedThoughts Cited by:
-    Table 4 <https://arxiv.org/html/2601.21582v1#A1.T4.4.3.2.2>.
+    Table 4 <https:>.
   * G. Huang, Z. Liu, L. Van Der Maaten, and K. Q. Weinberger (2017)
     ↑
 
     Densely connected convolutional networks. In Proceedings of the IEEE
     Conference on Computer Vision and Pattern Recognition, pp. 4700–
-    4708. Cited by: §2 <https://arxiv.org/html/2601.21582v1#S2.p3.1>.
+    4708. Cited by: §2 <https:>.
   * A. Jaegle, F. Gimeno, A. Brock, O. Vinyals, A. Zisserman, and J.
     Carreira (2021)
     ↑
 
     Perceiver: General perception with iterative attention. In
     International Conference on Machine Learning, pp. 4651–4664. Cited
-    by: §2 <https://arxiv.org/html/2601.21582v1#S2.p2.1>.
+    by: §2 <https:>.
   * A. Jolicoeur-Martineau (2025)
     ↑
 
     Less is more: Recursive reasoning with tiny networks. arXiv preprint
-    arXiv:2510.04871. Cited by: §2 <https://arxiv.org/
-    html/2601.21582v1#S2.p1.1>.
+    arXiv:2510.04871. Cited by: §2 <https:>.
   * D. P. Kingma and J. Ba (2015)
     ↑
 
     Adam: A method for stochastic optimization. In International
-    Conference on Learning Representations, Cited by: Table 3 <https://
-    arxiv.org/html/2601.21582v1#A1.T3.8.8.32.24.2>.
+    Conference on Learning Representations, Cited by: Table 3 <https:>.
   * Y. Koishekenov, A. Lipani, and N. Cancedda (2025)
     ↑
 
     Encode, Think, Decode: Scaling test-time reasoning with recursive
     latent thoughts. arXiv preprint arXiv:2510.07358. Cited by: §2
-    <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+    <https:>.
   * B. Li, Y. Li, Z. Li, C. Liu, W. Liu, G. Niu, Z. Tan, H. Xu, Z. Yao,
     T. Yuan, et al. (2025)
     ↑
 
     Megrez2 technical report. arXiv preprint arXiv:2507.17728. Cited by:
-    §2 <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+    §2 <https:>.
   * J. LI, E. Beeching, L. Tunstall, B. Lipkin, R. Soletskyi, S. C.
     Huang, K. Rasul, L. Yu, A. Jiang, Z. Shen, Z. Qin, B. Dong, L. Zhou,
     Y. Fleureau, G. Lample, and S. Polu (2024)
@@ -1169,20 +1110,18 @@ Report issue for preceding element
     NuminaMath: The largest public dataset in AI4Maths with 860k pairs
     of competition math problems and solutions. Note: https://
     github.com/project-numina/aimo-progress-prize/blob/main/report/
-    numina_dataset.pdf Cited by: Table 4 <https://arxiv.org/
-    html/2601.21582v1#A1.T4.4.11.10.2>.
+    numina_dataset.pdf Cited by: Table 4 <https:>.
   * A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C.
     Zhang, C. Ruan, et al. (2024)
     ↑
 
     Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437. Cited
-    by: §3.5 <https://arxiv.org/html/2601.21582v1#S3.SS5.p2.6>.
+    by: §3.5 <https:>.
   * I. Loshchilov and F. Hutter (2019)
     ↑
 
     Decoupled weight decay regularization. In International Conference
-    on Learning Representations, Cited by: Table 3 <https://arxiv.org/
-    html/2601.21582v1#A1.T3.8.8.32.24.2>.
+    on Learning Representations, Cited by: Table 3 <https:>.
   * S. M. McLeish, A. Li, J. Kirchenbauer, D. S. Kalra, B. R.
     Bartoldson, B. Kailkhura, A. Schwarzschild, J. Geiping, M. Goldblum,
     and T. Goldstein (2025)
@@ -1190,144 +1129,128 @@ Report issue for preceding element
 
     Teaching pretrained language models to think deeper with retrofitted
     recurrence. In NeurIPS 2025 Workshop on Efficient Reasoning, Cited
-    by: §2 <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+    by: §2 <https:>.
   * A. Mitra, H. Khanpour, C. Rosset, and A. Awadallah (2024)
     ↑
 
     Orca-math: Unlocking the potential of slms in grade school math.
-    arXiv preprint arXiv:2402.14830. Cited by: Table 4 <https://
-    arxiv.org/html/2601.21582v1#A1.T4.4.6.5.2>.
+    arXiv preprint arXiv:2402.14830. Cited by: Table 4 <https:>.
   * I. Moshkov, D. Hanley, I. Sorokin, S. Toshniwal, C. Henkel, B.
     Schifferer, W. Du, and I. Gitman (2025)
     ↑
 
     Aimo-2 winning solution: Building state-of-the-art mathematical
     reasoning models with openmathreasoning dataset. arXiv preprint
-    arXiv:2504.16891. Cited by: Table 4 <https://arxiv.org/
-    html/2601.21582v1#A1.T4.4.14.13.2>.
+    arXiv:2504.16891. Cited by: Table 4 <https:>.
   * T. Q. Nguyen and J. Salazar (2019)
     ↑
 
     Transformers without tears: Improving the normalization of self-
     attention. In Proceedings of the 16th International Conference on
-    Spoken Language Translation, Cited by: Table 3 <https://arxiv.org/
-    html/2601.21582v1#A1.T3.3.3.3.1>, Table 3 <https://arxiv.org/
-    html/2601.21582v1#A1.T3.8.8.30.22.2>.
+    Spoken Language Translation, Cited by: Table 3 <https:>, Table 3 <https:>.
   * M. Pagliardini, A. Mohtashami, F. Fleuret, and M. Jaggi (2024)
     ↑
 
     DenseFormer: Enhancing information flow in transformers via depth
     weighted averaging. In Advances in Neural Information Processing
-    Systems, Cited by: §2 <https://arxiv.org/html/2601.21582v1#S2.p3.1>.
+    Systems, Cited by: §2 <https:>.
   * N. Saunshi, N. Dikkala, Z. Li, S. Kumar, and S. J. Reddi (2025)
     ↑
 
     Reasoning with latent thoughts: On the power of looped transformers.
     In International Conference on Learning Representations, Cited by:
-    §2 <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+    §2 <https:>.
   * N. Shazeer (2020)
     ↑
 
     Glu variants improve transformer. arXiv preprint arXiv:2002.05202.
-    Cited by: Table 3 <https://arxiv.org/html/2601.21582v1#A1.T3.1.1.1.1>.
+    Cited by: Table 3 <https:>.
   * J. Su, M. Ahmed, Y. Lu, S. Pan, W. Bo, and Y. Liu (2024)
     ↑
 
     Roformer: Enhanced transformer with rotary position embedding.
-    Neurocomputing 568, pp. 127063. Cited by: §3.3 <https://arxiv.org/
-    html/2601.21582v1#S3.SS3.p1.8>.
+    Neurocomputing 568, pp. 127063. Cited by: §3.3 <https:>.
   * S. Tan, Y. Shen, Z. Chen, A. Courville, and C. Gan (2023)
     ↑
 
     Sparse universal transformer. In The 2023 Conference on Empirical
-    Methods in Natural Language Processing, Cited by: §2 <https://
-    arxiv.org/html/2601.21582v1#S2.p1.1>.
+    Methods in Natural Language Processing, Cited by: §2 <https:>.
   * Z. Tan, Z. Li, T. Yuan, D. Zhou, W. Liu, Y. Zhuang, Y. Li, G. Niu,
     C. Qin, Z. Yao, C. Liu, H. Xu, B. Li, G. Dai, B. Zhao, and Y. Wang
     (2025)
     ↑
 
     ReXMoE: Reusing experts with minimal overhead in mixture-of-experts.
-    arXiv preprint arXiv:2510.17483. Cited by: §2 <https://arxiv.org/
-    html/2601.21582v1#S2.p1.1>.
+    arXiv preprint arXiv:2510.17483. Cited by: §2 <https:>.
   * S. Toshniwal, W. Du, I. Moshkov, B. Kisacanin, A. Ayrapetyan, and I.
     Gitman (2025)
     ↑
 
     OpenMathInstruct-2: Accelerating AI for math with massive open-
     source instruction data. In The Thirteenth International Conference
-    on Learning Representations, Cited by: Table 4 <https://arxiv.org/
-    html/2601.21582v1#A1.T4.4.13.12.2>.
+    on Learning Representations, Cited by: Table 4 <https:>.
   * A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N.
     Gomez, Ł. Kaiser, and I. Polosukhin (2017)
     ↑
 
     Attention is all you need. Advances in neural information processing
-    systems. Cited by: §3.2 <https://arxiv.org/
-    html/2601.21582v1#S3.SS2.p1.6>, §3.2 <https://arxiv.org/
-    html/2601.21582v1#S3.SS2.p1.8>.
+    systems. Cited by: §3.2 <https:>, §3.2 <https:>.
   * G. Wang, J. Li, Y. Sun, X. Chen, C. Liu, Y. Wu, M. Lu, S. Song, and
     Y. A. Yadkori (2025a)
     ↑
 
     Hierarchical reasoning model. arXiv preprint arXiv:2506.21734. Cited
-    by: §2 <https://arxiv.org/html/2601.21582v1#S2.p1.1>.
+    by: §2 <https:>.
   * H. Wang, Y. Fan, M. F. Naeem, Y. Xian, J. E. Lenssen, L. Wang, F.
     Tombari, and B. Schiele (2025b)
     ↑
 
     TokenFormer: Rethinking transformer scaling with tokenized model
     parameters. In The Thirteenth International Conference on Learning
-    Representations, Cited by: §5 <https://arxiv.org/
-    html/2601.21582v1#S5.p5.1>.
+    Representations, Cited by: §5 <https:>.
   * B. Wu, M. Chen, X. Luo, S. Yan, Q. Yu, F. Xia, T. Zhang, H. Zhan, Z.
     Zhong, X. Zhou, et al. (2025)
     ↑
 
     Parallel loop transformer for efficient test-time computation
-    scaling. arXiv preprint arXiv:2510.24824. Cited by: §2 <https://
-    arxiv.org/html/2601.21582v1#S2.p1.1>.
+    scaling. arXiv preprint arXiv:2510.24824. Cited by: §2 <https:>.
   * D. Xiao, Q. Meng, S. Li, and X. Yuan (2025)
     ↑
 
     MUDDFormer: Breaking residual bottlenecks in transformers via
     multiway dynamic dense connections. In Forty-Second International
-    Conference on Machine Learning, Cited by: §2 <https://arxiv.org/
-    html/2601.21582v1#S2.p3.1>.
+    Conference on Machine Learning, Cited by: §2 <https:>.
   * W. Yuan, J. Yu, S. Jiang, K. Padthe, Y. Li, I. Kulikov, K. Cho, D.
     Wang, Y. Tian, J. E. Weston, et al. (2025)
     ↑
 
     Naturalreasoning: Reasoning in the wild with 2.8 m challenging
     questions. arXiv preprint arXiv:2502.13124. Cited by: Table 4
-    <https://arxiv.org/html/2601.21582v1#A1.T4.4.12.11.2>.
+    <https:>.
   * X. Yue, X. Qu, G. Zhang, Y. Fu, W. Huang, H. Sun, Y. Su, and W. Chen
     (2024)
     ↑
 
     MAmmoTH: Building math generalist models through hybrid instruction
     tuning. In The Twelfth International Conference on Learning
-    Representations, Cited by: Table 4 <https://arxiv.org/
-    html/2601.21582v1#A1.T4.4.7.6.2>.
+    Representations, Cited by: Table 4 <https:>.
   * B. Zhang and R. Sennrich (2019)
     ↑
 
     Root mean square layer normalization. In Advances in Neural
-    Information Processing Systems, Cited by: §3.3 <https://arxiv.org/
-    html/2601.21582v1#S3.SS3.p1.8>.
+    Information Processing Systems, Cited by: §3.3 <https:>.
   * H. Zhu, S. Hao, Z. Hu, J. Jiao, S. Russell, and Y. Tian (2025a)
     ↑
 
     Reasoning by superposition: a theoretical perspective on chain of
     continuous thought. arXiv preprint arXiv:2505.12514. Cited by: §1
-    <https://arxiv.org/html/2601.21582v1#S1.p2.1>.
+    <https:>.
   * R. Zhu, Z. Wang, K. Hua, T. Zhang, Z. Li, H. Que, B. Wei, Z. Wen, F.
     Yin, H. Xing, et al. (2025b)
     ↑
 
     Scaling latent reasoning via looped language models. arXiv preprint
-    arXiv:2510.25741. Cited by: §2 <https://arxiv.org/
-    html/2601.21582v1#S2.p1.1>.
+    arXiv:2510.25741. Cited by: §2 <https:>.
 
 
     Appendix A Experiment Details
@@ -1343,7 +1266,7 @@ EA number of experts 	32 	32 	517 	1039 	537 	1097
 EA number of active experts 	8
 EA bias update rate 	1e-3
 EA query/key size 	128
-EA expert activation function 	SwiGLU\operatorname{SwiGLU}(Shazeer, 2020 <https://arxiv.org/html/2601.21582v1#bib.bib35>)
+EA expert activation function 	SwiGLU\operatorname{SwiGLU}(Shazeer, 2020 <https:>)
 SA number of query heads 	16
 SA number of key/value heads 	8
 SA query/key/value size 	128
@@ -1359,14 +1282,13 @@ SA/DA MoE number of active experts 	1
 SA/DA MoE bias update rate 	1e-2
 hidden size hh 	1024
 default weight initialization 	∼𝒩​(0,1/(5⋅h))\sim\!\mathcal{N}(0,
-\sqrt{1/(5\cdot h)})(Nguyen and Salazar, 2019 <https://arxiv.org/html/2601.21582v1#bib.bib36>)
+\sqrt{1/(5\cdot h)})(Nguyen and Salazar, 2019 <https:>)
 out-proj weight initialization 	∼𝒩​(0,1/(2.5⋅h⋅depth⋅attn_dims))\sim\!
 \mathcal{N}(0,\sqrt{1/(2.5\cdot h\cdot\text{depth}\cdot\text{attn\_dims})})
-	     (adapted from Nguyen and Salazar (2019 <https://arxiv.org/html/2601.21582v1#bib.bib36>))
+	     (adapted from Nguyen and Salazar (2019 <https:>))
 	     with attn_dims = {3​ if DA,2​ else}\{3\text{ if DA},2\text{ else}\}
-tokenizer 	Llama 3.3 70B Instruct <https://huggingface.co/meta-llama/
-Llama-3.3-70B-Instruct>
-optimizer 	AdamW (Kingma and Ba, 2015 <https://arxiv.org/html/2601.21582v1#bib.bib37>; Loshchilov and Hutter, 2019 <https://arxiv.org/html/2601.21582v1#bib.bib38>)
+tokenizer 	Llama 3.3 70B Instruct <https:>
+optimizer 	AdamW (Kingma and Ba, 2015 <https:>; Loshchilov and Hutter, 2019 <https:>)
 	     with β\beta= (0.9, 0.999), ϵ\epsilon= 1e-8
 max. learning rate 	4e-4
 learning rate schedule 	constant after linear warmup
@@ -1380,44 +1302,27 @@ Report issue for preceding element
 Table 4: Training datasets.
 
 Dataset 	Citation 	License
-EleutherAI/hendrycks_math <https://huggingface.co/datasets/EleutherAI/
-hendrycks_math> 	(Hendryckset al., 2021b <https://arxiv.org/html/2601.21582v1#bib.bib31>) 	MIT <https://choosealicense.com/licenses/mit/>
-bethgelab/CuratedThoughts <https://huggingface.co/datasets/bethgelab/
-CuratedThoughts> 	(Hochlehnertet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib39>) 	-
+EleutherAI/hendrycks_math <https:> 	(Hendryckset al., 2021b <https:>) 	MIT <https:></https:>
+bethgelab/CuratedThoughts <https:> 	(Hochlehnertet al., 2025 <https:>) 	-
      (OpenR1-Math-220k-default, 		
      OpenThoughts-114k-math-default) 		
-microsoft/orca-math-word-problems-200k <https://huggingface.co/datasets/
-microsoft/orca-math-word-problems-200k> 	(Mitraet al., 2024 <https://arxiv.org/html/2601.21582v1#bib.bib40>) 	MIT <https://choosealicense.com/licenses/mit/>
-TIGER-Lab/MathInstruct <https://huggingface.co/datasets/TIGER-Lab/
-MathInstruct> 	(Yueet al., 2024 <https://arxiv.org/html/2601.21582v1#bib.bib41>) 	MIT <https://choosealicense.com/licenses/mit/>
-openai/gsm8k <https://huggingface.co/datasets/openai/gsm8k> 	(Cobbeet al., 2021 <https://arxiv.org/html/2601.21582v1#bib.bib30>) 	MIT <https://choosealicense.com/licenses/mit/>
-XinyaoHu/AMPS_khan <https://huggingface.co/datasets/XinyaoHu/AMPS_khan>
-	XinyaoHu/AMPS_khan <https://huggingface.co/datasets/XinyaoHu/AMPS_khan>
-	MIT <https://choosealicense.com/licenses/mit/>
-open-thoughts/OpenThoughts2-1M <https://huggingface.co/datasets/open-
-thoughts/OpenThoughts2-1M> 	(Guhaet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib42>) 	Apache 2.0 <https://choosealicense.com/licenses/apache-2.0/>
-AI-MO/NuminaMath-CoT <https://huggingface.co/datasets/AI-MO/NuminaMath-
-CoT> 	(LIet al., 2024 <https://arxiv.org/html/2601.21582v1#bib.bib43>) 	Apache 2.0 <https://choosealicense.com/licenses/apache-2.0/>
-facebook/natural_reasoning <https://huggingface.co/datasets/facebook/
-natural_reasoning> 	(Yuanet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib44>) 	CC-BY-NC-4.0 <https://spdx.org/licenses/CC-BY-NC-4.0>
-nvidia/OpenMathInstruct-2 <https://huggingface.co/datasets/nvidia/
-OpenMathInstruct-2> 	(Toshniwalet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib45>) 	CC-BY-4.0 <https://choosealicense.com/licenses/cc-by-4.0/>
-nvidia/OpenMathReasoning <https://huggingface.co/datasets/nvidia/
-OpenMathReasoning>(cot) 	(Moshkovet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib46>) 	CC-BY-4.0 <https://choosealicense.com/licenses/cc-by-4.0/>
-zwhe99/DeepMath-103K <https://huggingface.co/datasets/zwhe99/
-DeepMath-103K> 	(Heet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib47>) 	MIT <https://choosealicense.com/licenses/mit/>
-ibivibiv/math_instruct <https://huggingface.co/datasets/ibivibiv/
-math_instruct> 	ibivibiv/math_instruct <https://huggingface.co/datasets/
-ibivibiv/math_instruct> 	-
-nvidia/Nemotron-Pretraining-SFT-v1 <https://huggingface.co/datasets/
-nvidia/Nemotron-Pretraining-SFT-v1> 	(Basantet al., 2025 <https://arxiv.org/html/2601.21582v1#bib.bib48>) 	NVIDIA Data Agreement      for Model Training <https://
-huggingface.co/datasets/nvidia/Nemotron-Pretraining-SFT-v1/blob/main/
-LICENSE.md>
+microsoft/orca-math-word-problems-200k <https:> 	(Mitraet al., 2024 <https:>) 	MIT <https:></https:>
+TIGER-Lab/MathInstruct <https:> 	(Yueet al., 2024 <https:>) 	MIT <https:></https:>
+openai/gsm8k <https:> 	(Cobbeet al., 2021 <https:>) 	MIT <https:></https:>
+XinyaoHu/AMPS_khan <https:>
+	XinyaoHu/AMPS_khan <https:>
+	MIT <https:></https:>
+open-thoughts/OpenThoughts2-1M <https:> 	(Guhaet al., 2025 <https:>) 	Apache 2.0 <https:></https:>
+AI-MO/NuminaMath-CoT <https:> 	(LIet al., 2024 <https:>) 	Apache 2.0 <https:></https:>
+facebook/natural_reasoning <https:> 	(Yuanet al., 2025 <https:>) 	CC-BY-NC-4.0 <https:>
+nvidia/OpenMathInstruct-2 <https:> 	(Toshniwalet al., 2025 <https:>) 	CC-BY-4.0 <https:></https:>
+nvidia/OpenMathReasoning <https:>(cot) 	(Moshkovet al., 2025 <https:>) 	CC-BY-4.0 <https:></https:>
+zwhe99/DeepMath-103K <https:> 	(Heet al., 2025 <https:>) 	MIT <https:></https:>
+ibivibiv/math_instruct <https:> 	ibivibiv/math_instruct <https:> 	-
+nvidia/Nemotron-Pretraining-SFT-v1 <https:> 	(Basantet al., 2025 <https:>) 	NVIDIA Data Agreement      for Model Training <https:>
      (Nemotron-SFT-MATH) 	
-ajibawa-2023/Maths-College <https://huggingface.co/datasets/
-ajibawa-2023/Maths-College> 	ajibawa-2023/Maths-College <https://
-huggingface.co/datasets/ajibawa-2023/Maths-College> 	Apache 2.0
-<https://choosealicense.com/licenses/apache-2.0/>
+ajibawa-2023/Maths-College <https:> 	ajibawa-2023/Maths-College <https:> 	Apache 2.0
+<https:></https:>
 
 Report issue for preceding element
 
@@ -1426,10 +1331,9 @@ Report issue for preceding element
 
 Report issue for preceding element
 
-In addition to Figure 5 <https://arxiv.org/html/2601.21582v1#S4.F5>,
+In addition to Figure 5 <https:>,
 which shows P​(depth|expert)P(\text{depth}|\text{expert}) for EA, we
-show P​(expert|depth)P(\text{expert}|\text{depth}) in Figure 7 <https://
-arxiv.org/html/2601.21582v1#A2.F7>. The method for ordering the experts
+show P​(expert|depth)P(\text{expert}|\text{depth}) in Figure 7 <https:>. The method for ordering the experts
 remains the same.
 
 Report issue for preceding element
@@ -1463,7 +1367,7 @@ Submit without GitHub
 Submit in GitHub
 
 Report Issue for Selection
-Generated by L A T E xml [LOGO] <https://math.nist.gov/~BMiller/LaTeXML/>
+Generated by L A T E xml [LOGO] <https:></https:>
 
 
     Instructions for reporting errors
@@ -1480,8 +1384,7 @@ the methods listed below:
   * You can use Alt+Y to toggle on and Alt+Shift+Y to toggle off
     accessible reporting links at each section.
 
-Our team has already identified the following issues <https://
-github.com/arXiv/html_feedback/issues>. We appreciate your time
+Our team has already identified the following issues <https:>. We appreciate your time
 reviewing and reporting rendering errors we may not have found yet. Your
 efforts will help us improve the HTML versions for all readers, because
 disability should not be a barrier to accessing research. Thank you for
@@ -1489,7 +1392,6 @@ your continued support in championing open access for all.
 
 Have a free development cycle? Help support accessibility at arXiv! Our
 collaborators at LaTeXML maintain a list of packages that need
-conversion <https://github.com/brucemiller/LaTeXML/wiki/Porting-LaTeX-
-packages-for-LaTeXML>, and welcome developer contributions <https://
-github.com/brucemiller/LaTeXML/issues>.
+conversion <https:>, and welcome developer contributions <https:>.
 
+</https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></data:text></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></https:></javascript:togglecolorscheme()></https:></https:></https:></https:></https:></javascript:togglecolorscheme()></https:>

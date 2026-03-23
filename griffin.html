@@ -1,0 +1,2351 @@
+<!DOCTYPE html>
+
+<html>
+<body>
+<div>
+<div>
+<article>
+<div>
+<span>\correspondingauthor</span>
+<p>{sohamde, slsmith}@google.com<span>\reportnumber</span></p>
+</div>
+<h1>Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models</h1>
+<div>
+<span>
+<span>Soham De
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Samuel L. Smith
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Anushan Fernando
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Aleksandar Botev
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>George Cristian-Muraru
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Albert Gu
+</span><span>
+<span>Work done while at Google DeepMind
+</span></span></span>
+<span>
+<span>Ruba Haroun
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Leonard Berrada
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Yutian Chen
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Srivatsan Srinivasan
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Guillaume Desjardins
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Arnaud Doucet
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>David Budden
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Yee Whye Teh
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Razvan Pascanu
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Nando De Freitas
+</span><span>
+<span>
+</span></span></span>
+<span>
+<span>Caglar Gulcehre
+</span><span>
+<span>
+</span></span></span>
+</div>
+<div>
+<h6>Abstract</h6>
+<p>Recurrent neural networks (RNNs) have fast inference and scale efficiently on long sequences, but they are difficult to train and hard to scale. We propose Hawk, an RNN with gated linear recurrences, and Griffin, a hybrid model that mixes gated linear recurrences with local attention. Hawk exceeds the reported performance of Mamba on downstream tasks, while Griffin matches the performance of Llama-2 despite being trained on over 6 times fewer tokens. We also show that Griffin can extrapolate on sequences significantly longer than those seen during training. Our models match the hardware efficiency of Transformers during training, and during inference they have lower latency and significantly higher throughput. We scale Griffin up to 14B parameters, and explain how to shard our models for efficient distributed training.</p>
+</div>
+<section>
+<h2>
+<span>1 </span>Introduction</h2>
+<div>
+<p>Recurrent neural networks (RNNs) played a central role in the early days of deep learning and NLP research <cite>[Elman, <a href="https://arxiv.org/html/2402.19427v1#bib.bib13" title="">1990</a>, Siegelmann and Sontag, <a href="https://arxiv.org/html/2402.19427v1#bib.bib51" title="">1991</a>, Hochreiter and Schmidhuber, <a href="https://arxiv.org/html/2402.19427v1#bib.bib22" title="">1997</a>, Mikolov et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib39" title="">2010</a>, Bahdanau et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib2" title="">2014</a>, Sutskever et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib55" title="">2014</a>]</cite>, and achieved practical success in many applications, including Google’s first end to end machine translation system <cite>[Wu et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib61" title="">2016</a>]</cite>.
+However in recent years, both deep learning and NLP have been dominated by the Transformer architecture <cite>[Vaswani et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib58" title="">2017</a>]</cite>, which interleaves multi-layer perceptrons (MLPs) and multi-head attention (MHA).
+Transformers achieve better performance than RNNs in practice and are also very efficient at utilizing modern hardware <cite>[Kaplan et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib29" title="">2020</a>]</cite>.
+Transformer-based large language models trained on massive datasets collected from the web have achieved remarkable success <cite>[Brown et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib7" title="">2020</a>, Rae et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib46" title="">2021</a>, Hoffmann et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib23" title="">2022</a>, Touvron et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib57" title="">2023</a>, Achiam et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib1" title="">2023</a>, Gemini Team Google, <a href="https://arxiv.org/html/2402.19427v1#bib.bib14" title="">2023</a>]</cite>.</p>
+</div>
+<div>
+<p>Despite their successes, Transformers are difficult to scale efficiently to long sequences due to the quadratic complexity of global attention.
+Additionally, the linear growth of the Key-Value (KV) cache with the sequence length makes Transformers slow during inference.
+Although Multi-Query Attention (MQA) <cite>[Shazeer, <a href="https://arxiv.org/html/2402.19427v1#bib.bib48" title="">2019</a>]</cite> partially mitigates this issue by reducing the cache size by a constant factor, the cache still grows linearly in sequence length.
+Recurrent language models present a compelling alternative as they compress the entire sequence into a fixed-sized hidden state which is updated iteratively.
+However to replace Transformers, new RNN models must demonstrate not only comparable performance at scale but also achieve similar hardware efficiency <cite>[Gu et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib18" title="">2021a</a>, Mehta et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib38" title="">2022</a>, Smith et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib52" title="">2022</a>, Orvieto et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib43" title="">2023b</a>, Dao et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib11" title="">2022b</a>, Poli et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib45" title="">2023</a>, Gu and Dao, <a href="https://arxiv.org/html/2402.19427v1#bib.bib16" title="">2023</a>]</cite>.</p>
+</div>
+<figure>
+<div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(a)</span> </span><span>Scaling curve during training</span></figcaption>
+</figure>
+</div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(b)</span> </span><span>Maximum throughput at 1B parameter scale.</span></figcaption>
+</figure>
+</div>
+</div>
+<figcaption><span>Figure 1: </span>a) Hawk, Griffin and our MQA Transformer baseline all show power law scaling between held-out loss and training FLOPs, with Griffin achieving the lowest held-out loss at all FLOPs budgets. The largest Griffin model shown has 14B parameters. b) Hawk and Griffin achieve significantly higher throughput than our MQA Transformer, especially when the length of the sample increases.</figcaption>
+</figure>
+<div>
+<p>In this work, we propose the RG-LRU layer, a novel gated linear recurrent layer, around which we design a new recurrent block to replace MQA.
+We build two new models using this recurrent block: <span>Hawk</span>, a model which interleaves MLPs with recurrent blocks, and <span>Griffin</span>, a hybrid model which interleaves MLPs with a mixture of recurrent blocks and local attention <cite>[Beltagy et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib3" title="">2020</a>]</cite>. We show that:</p>
+</div>
+<div>
+<ol>
+<li>
+<span>1.</span>
+<div>
+<p>Hawk and Griffin exhibit power law scaling between held-out loss and training FLOPs, up to and beyond 7B parameters (Figure <a href="https://arxiv.org/html/2402.19427v1#S1.F1.sf1" title="Figure 1(a) ‣ Figure 1 ‣ 1 Introduction ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>1(a)</span></a>), as previously observed for Transformers <cite>[Kaplan et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib29" title="">2020</a>]</cite>.</p>
+</div>
+</li>
+<li>
+<span>2.</span>
+<div>
+<p>Griffin achieves slightly lower held-out loss than strong Transformer baselines at all model scales.</p>
+</div>
+</li>
+<li>
+<span>3.</span>
+<div>
+<p>We overtrain Hawk and Griffin on 300B tokens at a range of model scales. Hawk-3B exceeds the reported performance of Mamba-3B <cite>[Gu and Dao, <a href="https://arxiv.org/html/2402.19427v1#bib.bib16" title="">2023</a>]</cite> on downstream tasks, despite being trained on half as many tokens. Griffin-7B and Griffin-14B match the performance of Llama-2 <cite>[Touvron et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib57" title="">2023</a>]</cite> despite being trained on roughly 7 times fewer tokens (Section <a href="https://arxiv.org/html/2402.19427v1#S3.SS2" title="3.2 Evaluation on downstream tasks ‣ 3 Recurrent Models Scale as Efficiently as Transformers ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>3.2</span></a>).</p>
+</div>
+</li>
+<li>
+<span>4.</span>
+<div>
+<p>Both Hawk and Griffin achieve comparable training efficiency to Transformers on TPU-v3. Since diagonal RNN layers are memory bound, we achieve this with a kernel for the RG-LRU layer, implemented in Pallas <cite>[Bradbury et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib6" title="">2018</a>]</cite>, that minimizes memory transfers (Section <a href="https://arxiv.org/html/2402.19427v1#S4" title="4 Training Recurrent Models Efficiently on Device ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>4</span></a>).</p>
+</div>
+</li>
+<li>
+<span>5.</span>
+<div>
+<p>During inference, both Hawk and Griffin achieve significantly higher throughput than MQA Transformers (Figure <a href="https://arxiv.org/html/2402.19427v1#S1.F1.sf2" title="Figure 1(b) ‣ Figure 1 ‣ 1 Introduction ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>1(b)</span></a>), and they achieve lower latency when sampling long sequences (Section <a href="https://arxiv.org/html/2402.19427v1#S5" title="5 Inference Speed ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>5</span></a>).</p>
+</div>
+</li>
+<li>
+<span>6.</span>
+<div>
+<p>Griffin performs better than Transformers when evaluated on sequences longer than those seen during training, and can also efficiently learn copying and retrieval tasks from training data (Section <a href="https://arxiv.org/html/2402.19427v1#S6" title="6 Long Context Modeling ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>6</span></a>). However, Hawk and Griffin perform less well than Transformers when we evaluate pre-trained models on copying and exact-retrieval tasks without fine-tuning.</p>
+</div>
+</li>
+</ol>
+</div>
+</section>
+<section>
+<h2>
+<span>2 </span>Model Architecture</h2>
+<div>
+<p>All our models contain the following components: (i) <em>a residual block</em>, (ii) <em>an MLP block</em>, and (iii) <em>a temporal-mixing block</em>.
+While (i) and (ii) are the same across all models, we consider three temporal mixing blocks: <em>global Multi-Query Attention</em> (MQA), <em>local (sliding-window) MQA</em> and our proposed <em>recurrent block</em>.
+As part of the recurrent block we use the Real-Gated Linear Recurrent Unit (RG-LRU) – a novel recurrent layer inspired by the Linear Recurrent Unit <cite>[Orvieto et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib43" title="">2023b</a>]</cite>.</p>
+</div>
+<div>
+<p>The residual block, as shown in Figure <a href="https://arxiv.org/html/2402.19427v1#S2.F2" title="Figure 2 ‣ 2.1 Residual block ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2</span></a>(a), defines the global structure of our models and is inspired by pre-norm Transformers <cite>[Xiong et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib62" title="">2020</a>]</cite>.
+After embedding the input sequence we pass it through <math alttext="N"><semantics><mi>N</mi><annotation>N</annotation></semantics></math> such blocks (<math alttext="N"><semantics><mi>N</mi><annotation>N</annotation></semantics></math> denoting the model depth), and then we apply RMSNorm <cite>[Zhang and Sennrich, <a href="https://arxiv.org/html/2402.19427v1#bib.bib64" title="">2019</a>]</cite> to produce the final activations.
+To compute the token probabilities we apply a final linear layer followed by a softmax.
+The weights of this layer are shared with the input embedding layer.</p>
+</div>
+<section>
+<h3>
+<span>2.1 </span>Residual block</h3>
+<figure><img alt="Refer to caption"/>
+<figcaption><span>Figure 2: </span>
+a) The main backbone of our mode architecture is the residual block, which is stacked <math alttext="N"><semantics><mi>N</mi><annotation>N</annotation></semantics></math> times.
+b) The gated MLP block that we use. c) The recurrent block that we propose as an alternative to Multi Query Attention (MQA).
+It uses our proposed RG-LRU layer, defined in Section <a href="https://arxiv.org/html/2402.19427v1#S2.SS4" title="2.4 Real-Gated Linear Recurrent Unit (RG-LRU) ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2.4</span></a>.</figcaption>
+</figure>
+<div>
+<p>The residual block contains two components, applied in order.
+The first component takes the hidden state <math alttext="x"><semantics><mi>x</mi><annotation>x</annotation></semantics></math> and applies an RMSNorm <cite>[Zhang and Sennrich, <a href="https://arxiv.org/html/2402.19427v1#bib.bib64" title="">2019</a>]</cite>, followed by the temporal-mixing block.
+We then merge the output with a skip connection from <math alttext="x"><semantics><mi>x</mi><annotation>x</annotation></semantics></math> through addition.
+Similarly, the second component applies RMSNorm, followed by the MLP block and then merges its output with a skip connection from the input of the RMSNorm. This block is illustrated in Figure <a href="https://arxiv.org/html/2402.19427v1#S2.F2" title="Figure 2 ‣ 2.1 Residual block ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2</span></a> (a).</p>
+</div>
+</section>
+<section>
+<h3>
+<span>2.2 </span>MLP block</h3>
+<div>
+<p>We use a gated MLP block  <cite>[Dauphin et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib12" title="">2017</a>]</cite> (illustrated in Figure <a href="https://arxiv.org/html/2402.19427v1#S2.F2" title="Figure 2 ‣ 2.1 Residual block ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2</span></a>(b)), which
+creates two branches from its input of dimension <math alttext="D"><semantics><mi>D</mi><annotation>D</annotation></semantics></math>.
+We apply a linear layer with output dimension <math alttext="MD"><semantics><mrow><mi>M</mi><mo>​</mo><mi>D</mi></mrow><annotation>MD</annotation></semantics></math> on each branch, where <math alttext="M"><semantics><mi>M</mi><annotation>M</annotation></semantics></math> denotes the expansion factor. For simplicity, we use <math alttext="M=3"><semantics><mrow><mi>M</mi><mo>=</mo><mn>3</mn></mrow><annotation>M=3</annotation></semantics></math> throughout this work.
+We apply a GeLU non-linearity <cite>[Hendrycks and Gimpel, <a href="https://arxiv.org/html/2402.19427v1#bib.bib21" title="">2016</a>]</cite> on one of the branches before merging them
+by element-wise multiplication, similar to GeGeLU <cite>[Shazeer, <a href="https://arxiv.org/html/2402.19427v1#bib.bib49" title="">2020</a>]</cite>.
+However, in our MLP block, we apply a final linear layer with output dimension <math alttext="D"><semantics><mi>D</mi><annotation>D</annotation></semantics></math> on the outputs of the GeGeLU layer.</p>
+</div>
+</section>
+<section>
+<h3>
+<span>2.3 </span>Temporal-mixing blocks</h3>
+<div>
+<p>The temporal-mixing block is the component of our model that aggregates hidden layer activations at different temporal locations in the sequence.
+We consider three temporal-mixing blocks: global MQA <cite>[Shazeer, <a href="https://arxiv.org/html/2402.19427v1#bib.bib48" title="">2019</a>]</cite>, local MQA <cite>[Beltagy et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib3" title="">2020</a>]</cite> and our proposed <em>Recurrent block</em>.</p>
+</div>
+<section>
+<h5>Global multi-query attention</h5>
+<div>
+<p>Unless otherwise stated, we use MQA rather than MHA to improve the inference speeds of our Transformer baselines <cite>[Shazeer, <a href="https://arxiv.org/html/2402.19427v1#bib.bib48" title="">2019</a>]</cite>.
+We use a fixed head dimension <math alttext="D_{head}=128"><semantics><mrow><msub><mi>D</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub><mo>=</mo><mn>128</mn></mrow><annotation>D_{head}=128</annotation></semantics></math>, and we fix the number of attention heads <math alttext="H"><semantics><mi>H</mi><annotation>H</annotation></semantics></math> such that <math alttext="HD_{head}=D"><semantics><mrow><mrow><mi>H</mi><mo>​</mo><msub><mi>D</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub></mrow><mo>=</mo><mi>D</mi></mrow><annotation>HD_{head}=D</annotation></semantics></math>. This requires the model dimension <math alttext="D"><semantics><mi>D</mi><annotation>D</annotation></semantics></math> to be a multiple of 128.
+We do not use any absolute positional embeddings, but we use Rotary Position Embedding (RoPE) <cite>[Su et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib53" title="">2021</a>]</cite> as a relative positional embedding.</p>
+</div>
+</section>
+<section>
+<h5>Local sliding window attention</h5>
+<div>
+<p>One of the key disadvantages of using global attention is that its computational complexity grows quadratically in the sequence length.
+To address this, several works have started to adopt <em>local attention</em> <cite>[Beltagy et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib3" title="">2020</a>]</cite>, also known as sliding window attention.
+It allows each position to attend only to a fixed number of tokens in the past.
+This not only reduces the computational FLOPs but also bounds the size of the KV cache to the size of window, making it no longer quadratic in the sequence length.
+All other details are the same as the global MQA.</p>
+</div>
+</section>
+<section>
+<h5>Recurrent block</h5>
+<div>
+<p>Our recurrent block (Figure <a href="https://arxiv.org/html/2402.19427v1#S2.F2" title="Figure 2 ‣ 2.1 Residual block ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2</span></a>(c)) is similar to the GSS block <cite>[Mehta et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib38" title="">2022</a>]</cite> and the block used by Mamba <cite>[Gu and Dao, <a href="https://arxiv.org/html/2402.19427v1#bib.bib16" title="">2023</a>]</cite>.
+We take the input of dimension <math alttext="D"><semantics><mi>D</mi><annotation>D</annotation></semantics></math> and apply two linear layers with output dimension <math alttext="D_{RNN}"><semantics><msub><mi>D</mi><mrow><mi>R</mi><mo>​</mo><mi>N</mi><mo>​</mo><mi>N</mi></mrow></msub><annotation>D_{RNN}</annotation></semantics></math> in parallel, creating two branches.
+On the first branch, we apply a small separable Conv1D layer, inspired by the Shift-SSM in H3 <cite>[Dao et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib11" title="">2022b</a>]</cite>, with a temporal filter dimension of 4.
+Note that this Conv1D layer is very small, with just <math alttext="4D_{RNN}"><semantics><mrow><mn>4</mn><mo>​</mo><msub><mi>D</mi><mrow><mi>R</mi><mo>​</mo><mi>N</mi><mo>​</mo><mi>N</mi></mrow></msub></mrow><annotation>4D_{RNN}</annotation></semantics></math> parameters.
+We follow the Conv1D layer with our proposed RG-LRU layer (defined below.) On the second branch we apply a GeLU nonlinearity and then merge the branches by element-wise multiplication.
+We then apply a final linear layer with output dimension <math alttext="D"><semantics><mi>D</mi><annotation>D</annotation></semantics></math>.</p>
+</div>
+</section>
+</section>
+<section>
+<h3>
+<span>2.4 </span>Real-Gated Linear Recurrent Unit (RG-LRU)</h3>
+<div>
+<p>Our proposed RG-LRU layer has a simple recurrence inspired by the Linear Recurrent Unit (LRU) <cite>[Orvieto et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib43" title="">2023b</a>]</cite>, but incorporates a gating mechanism motivated by the literature on non-linear RNNs, in particular LSTMs <cite>[Hochreiter and Schmidhuber, <a href="https://arxiv.org/html/2402.19427v1#bib.bib22" title="">1997</a>]</cite> and GRUs <cite>[Chung et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib9" title="">2014</a>]</cite>.
+The equations describing the layer are as follows:</p>
+</div>
+<div>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle r_{t}"><semantics><msub><mi>r</mi><mi>t</mi></msub><annotation>\displaystyle r_{t}</annotation></semantics></math></td>
+<td><math alttext="\displaystyle="><semantics><mo>=</mo><annotation>\displaystyle=</annotation></semantics></math></td>
+<td><math alttext="\displaystyle\sigma\left(W_{a}x_{t}+b_{a}\right),\quad{\color[rgb]{0.5,0.5,0.5}\text{ \emph{recurrence gate}}}"><semantics><mrow><mrow><mi>σ</mi><mo>​</mo><mrow><mo>(</mo><mrow><mrow><msub><mi>W</mi><mi>a</mi></msub><mo>​</mo><msub><mi>x</mi><mi>t</mi></msub></mrow><mo>+</mo><msub><mi>b</mi><mi>a</mi></msub></mrow><mo>)</mo></mrow></mrow><mo>,</mo><mrow><mtext> </mtext><mtext>recurrence gate</mtext></mrow></mrow><annotation>\displaystyle\sigma\left(W_{a}x_{t}+b_{a}\right),\quad{\color[rgb]{0.5,0.5,0.5}\text{ \emph{recurrence gate}}}</annotation></semantics></math></td>
+<td></td>
+<td><span>(1)</span></td>
+</tr></tbody>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle i_{t}"><semantics><msub><mi>i</mi><mi>t</mi></msub><annotation>\displaystyle i_{t}</annotation></semantics></math></td>
+<td><math alttext="\displaystyle="><semantics><mo>=</mo><annotation>\displaystyle=</annotation></semantics></math></td>
+<td><math alttext="\displaystyle\sigma(W_{x}x_{t}+b_{x}),\quad{\color[rgb]{0.5,0.5,0.5}\text{\emph{ input gate}}}"><semantics><mrow><mrow><mi>σ</mi><mo>​</mo><mrow><mo>(</mo><mrow><mrow><msub><mi>W</mi><mi>x</mi></msub><mo>​</mo><msub><mi>x</mi><mi>t</mi></msub></mrow><mo>+</mo><msub><mi>b</mi><mi>x</mi></msub></mrow><mo>)</mo></mrow></mrow><mo>,</mo><mtext><em> input gate</em></mtext></mrow><annotation>\displaystyle\sigma(W_{x}x_{t}+b_{x}),\quad{\color[rgb]{0.5,0.5,0.5}\text{\emph{ input gate}}}</annotation></semantics></math></td>
+<td></td>
+<td><span>(2)</span></td>
+</tr></tbody>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle a_{t}"><semantics><msub><mi>a</mi><mi>t</mi></msub><annotation>\displaystyle a_{t}</annotation></semantics></math></td>
+<td><math alttext="\displaystyle="><semantics><mo>=</mo><annotation>\displaystyle=</annotation></semantics></math></td>
+<td><math alttext="\displaystyle a^{cr_{t}},"><semantics><mrow><msup><mi>a</mi><mrow><mi>c</mi><mo>​</mo><msub><mi>r</mi><mi>t</mi></msub></mrow></msup><mo>,</mo></mrow><annotation>\displaystyle a^{cr_{t}},</annotation></semantics></math></td>
+<td></td>
+<td><span>(3)</span></td>
+</tr></tbody>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle h_{t}"><semantics><msub><mi>h</mi><mi>t</mi></msub><annotation>\displaystyle h_{t}</annotation></semantics></math></td>
+<td><math alttext="\displaystyle="><semantics><mo>=</mo><annotation>\displaystyle=</annotation></semantics></math></td>
+<td><math alttext="\displaystyle a_{t}\odot h_{t-1}+\sqrt{1-a_{t}^{2}}\odot(i_{t}\odot x_{t})."><semantics><mrow><mrow><mrow><msub><mi>a</mi><mi>t</mi></msub><mo>⊙</mo><msub><mi>h</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub></mrow><mo>+</mo><mrow><msqrt><mrow><mn>1</mn><mo>−</mo><msubsup><mi>a</mi><mi>t</mi><mn>2</mn></msubsup></mrow></msqrt><mo>⊙</mo><mrow><mo>(</mo><mrow><msub><mi>i</mi><mi>t</mi></msub><mo>⊙</mo><msub><mi>x</mi><mi>t</mi></msub></mrow><mo>)</mo></mrow></mrow></mrow><mo>.</mo></mrow><annotation>\displaystyle a_{t}\odot h_{t-1}+\sqrt{1-a_{t}^{2}}\odot(i_{t}\odot x_{t}).</annotation></semantics></math></td>
+<td></td>
+<td><span>(4)</span></td>
+</tr></tbody>
+</table>
+<p>The output of the layer is <math alttext="y_{t}=h_{t}"><semantics><mrow><msub><mi>y</mi><mi>t</mi></msub><mo>=</mo><msub><mi>h</mi><mi>t</mi></msub></mrow><annotation>y_{t}=h_{t}</annotation></semantics></math>, and the non-linearity <math alttext="\sigma"><semantics><mi>σ</mi><annotation>\sigma</annotation></semantics></math> in the equations is the <math alttext="\operatorname{sigmoid}"><semantics><mi>sigmoid</mi><annotation>\operatorname{sigmoid}</annotation></semantics></math> function.
+The recurrent weight <math alttext="a"><semantics><mi>a</mi><annotation>a</annotation></semantics></math> in Equation (<a href="https://arxiv.org/html/2402.19427v1#S2.E4" title="Equation 4 ‣ 2.4 Real-Gated Linear Recurrent Unit (RG-LRU) ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>4</span></a>) is diagonal. Hence all operations are element-wise.
+We parameterize <math alttext="a"><semantics><mi>a</mi><annotation>a</annotation></semantics></math> in Equation (<a href="https://arxiv.org/html/2402.19427v1#S2.E3" title="Equation 3 ‣ 2.4 Real-Gated Linear Recurrent Unit (RG-LRU) ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>3</span></a>) as <math alttext="a=\sigma(\Lambda)"><semantics><mrow><mi>a</mi><mo>=</mo><mrow><mi>σ</mi><mo>​</mo><mrow><mo>(</mo><mi>Λ</mi><mo>)</mo></mrow></mrow></mrow><annotation>a=\sigma(\Lambda)</annotation></semantics></math>, where <math alttext="\Lambda"><semantics><mi>Λ</mi><annotation>\Lambda</annotation></semantics></math> is a learnable parameter.
+This guarantees that <math alttext="0\leq a\leq 1"><semantics><mrow><mn>0</mn><mo>≤</mo><mi>a</mi><mo>≤</mo><mn>1</mn></mrow><annotation>0\leq a\leq 1</annotation></semantics></math>, ensuring that the recurrence is stable.
+The variable <math alttext="c"><semantics><mi>c</mi><annotation>c</annotation></semantics></math> is a scalar-valued constant set to <math alttext="8"><semantics><mn>8</mn><annotation>8</annotation></semantics></math>.
+For numerical stability, in practice we compute <math alttext="a^{cr_{t}}"><semantics><msup><mi>a</mi><mrow><mi>c</mi><mo>​</mo><msub><mi>r</mi><mi>t</mi></msub></mrow></msup><annotation>a^{cr_{t}}</annotation></semantics></math> in log-space (see Appendix <a href="https://arxiv.org/html/2402.19427v1#A1" title="Appendix A RG-LRU Recurrence Gate ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>A</span></a>).
+The layer has gates on both the input <math alttext="x"><semantics><mi>x</mi><annotation>x</annotation></semantics></math> and the recurrent weight <math alttext="a"><semantics><mi>a</mi><annotation>a</annotation></semantics></math>. However, neither gate depends on the recurrent state <math alttext="h_{t-1}"><semantics><msub><mi>h</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><annotation>h_{t-1}</annotation></semantics></math>, which ensures that the computation can be executed efficiently on device.
+We initialize both <math alttext="W_{a}"><semantics><msub><mi>W</mi><mi>a</mi></msub><annotation>W_{a}</annotation></semantics></math> and <math alttext="W_{x}"><semantics><msub><mi>W</mi><mi>x</mi></msub><annotation>W_{x}</annotation></semantics></math> using LeCun init <cite>[LeCun et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib33" title="">2002</a>]</cite>.
+We initialize <math alttext="\Lambda"><semantics><mi>Λ</mi><annotation>\Lambda</annotation></semantics></math> such that <math alttext="a^{c}"><semantics><msup><mi>a</mi><mi>c</mi></msup><annotation>a^{c}</annotation></semantics></math> is uniformly distributed between <math alttext="0.9"><semantics><mn>0.9</mn><annotation>0.9</annotation></semantics></math> and <math alttext="0.999"><semantics><mn>0.999</mn><annotation>0.999</annotation></semantics></math> at the start of training, similar to <cite>Orvieto et al. [<a href="https://arxiv.org/html/2402.19427v1#bib.bib43" title="">2023b</a>]</cite>.
+Unlike many recent works in the SSM literature, the RG-LRU does not use initialization inspired by the theory of orthogonal polynomials <cite>[Gu et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib17" title="">2020</a>]</cite>, and it also is not defined as the discretization of an underlying continuous system <cite>[Gu et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib18" title="">2021a</a>]</cite>.
+Unlike the original LRU layer, we do not use complex algebra in the recurrence. While using complex recurrences would lead to a more expressive layer <cite>[Orvieto et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib42" title="">2023a</a>]</cite> we found that complex recurrences were not beneficial for language modelling in practice, as also observed by <cite>Gu and Dao [<a href="https://arxiv.org/html/2402.19427v1#bib.bib16" title="">2023</a>]</cite>.<span><sup>1</sup><span><span><sup>1</sup><span>1</span>We suggest ablating the use of complex numbers for other modalities and provide more information about the complex-valued version of the RG-LRU layer in Appendix <a href="https://arxiv.org/html/2402.19427v1#A2" title="Appendix B Complex-Gated Linear Recurrent Unit (CG-LRU) ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>B</span></a>.</span></span></span></p>
+</div>
+<section>
+<h5>Gate behaviour</h5>
+<div>
+<p>The <em>input gate</em> <math alttext="i_{t}"><semantics><msub><mi>i</mi><mi>t</mi></msub><annotation>i_{t}</annotation></semantics></math> is similar to the one in LSTM, which can filter (or scale down) the input <math alttext="x_{t}"><semantics><msub><mi>x</mi><mi>t</mi></msub><annotation>x_{t}</annotation></semantics></math>.
+However, to our knowledge, our recurrence gate <math alttext="r_{t}"><semantics><msub><mi>r</mi><mi>t</mi></msub><annotation>r_{t}</annotation></semantics></math> is different from other gating mechanisms in the literature.
+For example, the <em>selection mechanism</em> proposed in Mamba <cite>[Gu and Dao, <a href="https://arxiv.org/html/2402.19427v1#bib.bib16" title="">2023</a>]</cite> is comparable to the <em>update gate</em> of GRUs which interpolates between the previous state and and the current observation <math alttext="x_{t}"><semantics><msub><mi>x</mi><mi>t</mi></msub><annotation>x_{t}</annotation></semantics></math>.
+Its effect on the hidden state allows it to <em>reset its state and forget any information it holds from the past</em>, similar to the forget gate in the LSTM.
+In contrast, our recurrence gate can approximately interpolate between the standard LRU update from <cite>Orvieto et al. [<a href="https://arxiv.org/html/2402.19427v1#bib.bib42" title="">2023a</a>]</cite> and the previous hidden state, which allows it to effectively <em>discard the input and preserve all information from the previous history</em> (see Appendix <a href="https://arxiv.org/html/2402.19427v1#A1" title="Appendix A RG-LRU Recurrence Gate ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>A</span></a> for further details). We believe the key role of this gate is to enable the model to achieve super-exponential memory by reducing the influence of uninformative inputs.</p>
+</div>
+</section>
+</section>
+</section>
+<section>
+<h2>
+<span>3 </span>Recurrent Models Scale as Efficiently as Transformers</h2>
+<div>
+<p>Scaling studies provide important insights into how to tune the hyperparameters of a model and its behaviour at scale.
+Here, we define the models evaluated in our studies, and provide scaling curves up to and beyond 7B parameters. Finally, we assess the performance of our models on downstream tasks.
+We consider 3 model families in this work; (1) a MQA-Transformer baseline, (2) Hawk; our pure RNN model, and (3) Griffin; our hybrid model which mixes recurrent blocks with local attention. We define the key model hyper-parameters for models across a range of scales in Appendix <a href="https://arxiv.org/html/2402.19427v1#A3" title="Appendix C Model Scale Hyper-Parameters ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>C</span></a>.</p>
+</div>
+<section>
+<h5>MQA Transformer baseline</h5>
+<div>
+<p>Our Transformer baseline uses the residual pattern and the gated MLP block described in Section <a href="https://arxiv.org/html/2402.19427v1#S2" title="2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2</span></a>, in combination with MQA <cite>[Shazeer, <a href="https://arxiv.org/html/2402.19427v1#bib.bib48" title="">2019</a>]</cite> and RoPE <cite>[Su et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib53" title="">2021</a>]</cite>.</p>
+</div>
+</section>
+<section>
+<h5>Hawk</h5>
+<div>
+<p>The Hawk architecture uses the same residual pattern and MLP block as our Transformer baseline, but we use the recurrent block introduced in Section <a href="https://arxiv.org/html/2402.19427v1#S2.SS3.SSS0.Px3" title="Recurrent block ‣ 2.3 Temporal-mixing blocks ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2.3</span></a> with a RG-LRU layer (see Section <a href="https://arxiv.org/html/2402.19427v1#S2.SS4" title="2.4 Real-Gated Linear Recurrent Unit (RG-LRU) ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2.4</span></a>) as our temporal mixing block, instead of MQA.
+We expand the width of the recurrent block by a factor of approximately <math alttext="\frac{4}{3}"><semantics><mfrac><mn>4</mn><mn>3</mn></mfrac><annotation>\frac{4}{3}</annotation></semantics></math> (i.e. <math alttext="D_{RNN}\approx 4D/3"><semantics><mrow><msub><mi>D</mi><mrow><mi>R</mi><mo>​</mo><mi>N</mi><mo>​</mo><mi>N</mi></mrow></msub><mo>≈</mo><mrow><mrow><mn>4</mn><mo>​</mo><mi>D</mi></mrow><mo>/</mo><mn>3</mn></mrow></mrow><annotation>D_{RNN}\approx 4D/3</annotation></semantics></math>) in order to roughly match the parameter count of a MHA block when both use the same model dimension <math alttext="D"><semantics><mi>D</mi><annotation>D</annotation></semantics></math>.<span><sup>2</sup><span><span><sup>2</sup><span>2</span>Note that we match parameters with MHA attention block, though our Transformer baseline and Griffin ended up relying on MQA attention in order to improve inference efficiency. This means that our recurrent blocks have slightly more parameters than the corresponding MQA blocks.</span></span></span> See Appendix <a href="https://arxiv.org/html/2402.19427v1#A3" title="Appendix C Model Scale Hyper-Parameters ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>C</span></a> for precise hyper-parameters.</p>
+</div>
+</section>
+<section>
+<h5>Griffin</h5>
+<div>
+<p>The key advantage of recurrent blocks over global attention is that they use a fixed state size to summarize the sequence, whereas the size of MQA’s KV cache grows proportional to sequence length.
+Since local attention (Section <a href="https://arxiv.org/html/2402.19427v1#S2.SS3.SSS0.Px2" title="Local sliding window attention ‣ 2.3 Temporal-mixing blocks ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2.3</span></a>) has the same property, mixing recurrent blocks with local attention preserves this benefit.
+We have found this combination extremely effective, since local attention accurately models the recent past, while the recurrent layers can transmit information across long sequences.</p>
+</div>
+<div>
+<p>Griffin uses the same residual pattern and MLP block as our Transformer baseline. However unlike both our MQA Transformer baseline and the Hawk model, Griffin uses a mixture of recurrent blocks and MQA blocks.
+Specifically, we employ a layered structure by alternating two residual blocks with a recurrent block followed by one residual block which uses the local (MQA) attention block described in Section <a href="https://arxiv.org/html/2402.19427v1#S2.SS3.SSS0.Px2" title="Local sliding window attention ‣ 2.3 Temporal-mixing blocks ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2.3</span></a>.
+Unless otherwise stated, the local attention window size is fixed to 1024 tokens.</p>
+</div>
+</section>
+<section>
+<h3>
+<span>3.1 </span>Scaling curves</h3>
+<div>
+<p>We present our main scaling results in Figure <a href="https://arxiv.org/html/2402.19427v1#S1.F1.sf1" title="Figure 1(a) ‣ Figure 1 ‣ 1 Introduction ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>1(a)</span></a>.
+All three model families are trained at a range of model scales from 100M to 7B parameters, with an additional Griffin model with 14 billion parameters.
+We increase the number of training tokens to be roughly proportional to the number of parameters of the model, as prescribed by the Chinchilla scaling laws <cite>[Hoffmann et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib23" title="">2022</a>]</cite>.
+Models are trained on the MassiveText dataset <cite>[Hoffmann et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib23" title="">2022</a>]</cite>, previously used to train Gopher <cite>[Rae et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib46" title="">2021</a>]</cite> and Chinchilla <cite>[Hoffmann et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib23" title="">2022</a>]</cite>, although we use a slightly different data subset distribution.
+A sequence length of 2048 tokens was used (see Section <a href="https://arxiv.org/html/2402.19427v1#S6" title="6 Long Context Modeling ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>6</span></a> for results with longer sequences.)
+All experiments use the AdamW optimizer <cite>[Loshchilov and Hutter, <a href="https://arxiv.org/html/2402.19427v1#bib.bib35" title="">2017</a>]</cite>. We tune the learning rate, weight decay and <math alttext="\beta_{2}"><semantics><msub><mi>β</mi><mn>2</mn></msub><annotation>\beta_{2}</annotation></semantics></math> parameters for small models, and use these runs to identify scaling rules for these hyper-parameters which predict their optimal values for the 7B and 14B models.</p>
+</div>
+<div>
+<p>All three model families demonstrate a linear scaling relationship between the validation loss and training FLOPs (see Figure <a href="https://arxiv.org/html/2402.19427v1#S1.F1.sf1" title="Figure 1(a) ‣ Figure 1 ‣ 1 Introduction ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>1(a)</span></a>; note both axes are in log scale), as previously observed for Transformers by <cite>Brown et al. [<a href="https://arxiv.org/html/2402.19427v1#bib.bib7" title="">2020</a>]</cite>.
+Notably, Griffin achieves lower validation loss than the Transformer baseline across all FLOPs budgets despite not using any global attention layers. Hawk on the other hand achieves slightly higher validation loss, but this gap appears to close as the training budget increases.</p>
+</div>
+</section>
+<section>
+<h3>
+<span>3.2 </span>Evaluation on downstream tasks</h3>
+<div>
+<p>In order to compare to other models in the literature, we train all our models for 300B tokens before evaluating on downstream tasks.
+The two external baselines that we compare to are Mamba-3B <cite>[Gu and Dao, <a href="https://arxiv.org/html/2402.19427v1#bib.bib16" title="">2023</a>]</cite>, the strongest small recurrent model reported in the literature to date, and Llama-2 <cite>[Touvron et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib57" title="">2023</a>]</cite>, a widely used open Transformer model. Both external baselines have been trained on significantly more than 300B tokens – Mamba has been trained on 600B tokens, twice more, and Llama-2 has been trained on 2T tokens, nearly seven times more. We note however that both Mamba and Llama-2 were trained on different datasets and with different hyper-parameter tuning strategies, which may partially explain our strong performance. We therefore also include our own MQA transformer baseline, trained on the same data and with the same hyper-parameter tuning budget as Hawk and Griffin.</p>
+</div>
+<div>
+<p>We provide an evaluation on downstream tasks in Table <a href="https://arxiv.org/html/2402.19427v1#S3.T1" title="Table 1 ‣ 3.2 Evaluation on downstream tasks ‣ 3 Recurrent Models Scale as Efficiently as Transformers ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>1</span></a>.
+We find that both Hawk and Griffin achieve very strong performance.
+In line with other works, we report character normalized accuracy on MMLU, HellaSwag, PIQA, ARC-E and ARC-C, while we report absolute accuracy on WinoGrande with partial scoring. The performance of Hawk improves significantly as we increase the model size, and Hawk-3B achieves stronger performance on downstream tasks than Mamba-3B, despite being trained on half as many tokens.
+Griffin-3B significantly outperforms Mamba-3B, and Griffin-7B and Griffin-14B achieve performance competitive with Llama-2, despite being trained on nearly 7 times fewer tokens. Hawk is also competitive with our MQA Transformer baseline, while Griffin outperforms this baseline.</p>
+</div>
+<figure>
+<figcaption><span>Table 1: </span>Character normalized accuracy. Hawk is competitive with our Transformer baseline, and exceeds the reported performance of Mamba despite being trained on half as many tokens. Griffin outperforms our Transformer baseline, and matches the performance of Llama-2 despite being trained on roughly 7 times fewer tokens. We report unnormalized accuracy with partial scoring for WinoGrande.</figcaption>
+<div><span>
+<table>
+<tbody>
+<tr>
+<th><span>Model</span></th>
+<th><span>Model</span></th>
+<th><span>Training</span></th>
+<td><span>MMLU</span></td>
+<td><span>HellaSwag</span></td>
+<td><span>PIQA</span></td>
+<td><span>WinoGrande</span></td>
+<td><span>ARC-E</span></td>
+<td><span>ARC-C</span></td>
+<td><span>Average</span></td>
+</tr>
+<tr>
+<th><span>Type</span></th>
+<th><span>Size</span></th>
+<th><span>Tokens</span></th>
+</tr>
+<tr>
+<th><span>Mamba</span></th>
+<th>3B</th>
+<th>600B</th>
+<td>26.2</td>
+<td>71.0</td>
+<td>78.1</td>
+<td>65.9</td>
+<td>68.2</td>
+<td>41.7</td>
+<td>58.5</td>
+</tr>
+<tr>
+<th></th>
+<th><span>7B</span></th>
+<th><span>2T</span></th>
+<td><span>45.3</span></td>
+<td><span>77.2</span></td>
+<td><span>78.8</span></td>
+<td><span>69.2</span></td>
+<td><span>75.2</span></td>
+<td><span>45.9</span></td>
+<td><span>65.3</span></td>
+</tr>
+<tr>
+<th><span>Llama-2</span></th>
+<th><span>13B</span></th>
+<th><span>2T</span></th>
+<td><span>54.8</span></td>
+<td><span>80.7</span></td>
+<td><span>80.5</span></td>
+<td><span>72.8</span></td>
+<td><span>77.3</span></td>
+<td><span>49.4</span></td>
+<td><span>69.3</span></td>
+</tr>
+<tr>
+<th><span>MQA</span></th>
+<th>1B</th>
+<th>300B</th>
+<td>28.9</td>
+<td>64.8</td>
+<td>75.0</td>
+<td>62.0</td>
+<td>60.2</td>
+<td>35.4</td>
+<td>54.4</td>
+</tr>
+<tr>
+<th><span>Transformer</span></th>
+<th>3B</th>
+<th>300B</th>
+<td>31.7</td>
+<td>71.0</td>
+<td>77.6</td>
+<td>66.1</td>
+<td>68.1</td>
+<td>39.2</td>
+<td>59.0</td>
+</tr>
+<tr>
+<th><span>(Baseline)</span></th>
+<th>6B</th>
+<th>300B</th>
+<td>38.9</td>
+<td>77.0</td>
+<td>79.5</td>
+<td>70.4</td>
+<td>74.1</td>
+<td>45.2</td>
+<td>64.2</td>
+</tr>
+<tr>
+<th></th>
+<th><span>1B</span></th>
+<th><span>300B</span></th>
+<td><span>29.7</span></td>
+<td><span>63.3</span></td>
+<td><span>76.1</span></td>
+<td><span>57.2</span></td>
+<td><span>60.6</span></td>
+<td><span>34.6</span></td>
+<td><span>53.6</span></td>
+</tr>
+<tr>
+<th></th>
+<th><span>3B</span></th>
+<th><span>300B</span></th>
+<td><span>31.3</span></td>
+<td><span>71.7</span></td>
+<td><span>78.8</span></td>
+<td><span>66.5</span></td>
+<td><span>68.4</span></td>
+<td><span>40.2</span></td>
+<td><span>59.5</span></td>
+</tr>
+<tr>
+<th><span><span>Hawk</span></span></th>
+<th><span>7B</span></th>
+<th><span>300B</span></th>
+<td><span>35.0</span></td>
+<td><span>77.6</span></td>
+<td><span>80.0</span></td>
+<td><span>69.9</span></td>
+<td><span>74.4</span></td>
+<td><span>45.9</span></td>
+<td><span>63.8</span></td>
+</tr>
+<tr>
+<th><span><span>Griffin</span></span></th>
+<th>1B</th>
+<th>300B</th>
+<td>29.5</td>
+<td>67.2</td>
+<td>77.4</td>
+<td>65.2</td>
+<td>67.0</td>
+<td>36.9</td>
+<td>57.2</td>
+</tr>
+<tr>
+<th>3B</th>
+<th>300B</th>
+<td>32.6</td>
+<td>73.5</td>
+<td>78.1</td>
+<td>67.2</td>
+<td>71.5</td>
+<td>41.4</td>
+<td>60.7</td>
+</tr>
+<tr>
+<th>7B</th>
+<th>300B</th>
+<td>39.3</td>
+<td>78.6</td>
+<td>81.0</td>
+<td>72.6</td>
+<td>75.4</td>
+<td>47.9</td>
+<td>65.8</td>
+</tr>
+<tr>
+<th>14B</th>
+<th>300B</th>
+<td>49.5</td>
+<td><span>81.4</span></td>
+<td><span>81.8</span></td>
+<td><span>74.1</span></td>
+<td><span>79.1</span></td>
+<td><span>50.8</span></td>
+<td><span>69.5</span></td>
+</tr>
+</tbody>
+</table>
+</span></div>
+</figure>
+</section>
+</section>
+<section>
+<h2>
+<span>4 </span>Training Recurrent Models Efficiently on Device</h2>
+<div>
+<p>We encountered two main engineering challenges when developing and scaling our models.
+First, how to efficiently shard our models across multiple devices.
+Second, how to efficiently implement linear recurrences to maximize training efficiency on TPUs.
+We address both of these challenges in this section, before providing an empirical comparison of the training speed of Griffin and our MQA baseline.</p>
+</div>
+<section>
+<h3>
+<span>4.1 </span>Model parallelism for large scale training</h3>
+<div>
+<p>As our model increases in size, we cannot fit the model on a single device during training, even with a batch size of 1 per-device.
+We therefore use model parallelism to shard our large models across devices during training.
+Since communication costs across different training devices are expensive, efficiently sharding the model is critical for fast training at scale.</p>
+</div>
+<section>
+<h5>MLP and MQA block</h5>
+<div>
+<p>For our gated-MLP block we use Megatron-style sharding <cite>[Shoeybi et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib50" title="">2019</a>]</cite>, which requires a single all-reduce operation in both the forward and the backward pass.
+Similarly, we apply the same strategy to the linear layers in the attention block, and additionally shard the attention mechanism over its heads <cite>[Narayanan et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib40" title="">2021</a>]</cite>.</p>
+</div>
+</section>
+<section>
+<h5>Recurrent Block</h5>
+<div>
+<p>The recurrent block contains two linear layers per branch. This allows us to apply Megatron sharding to these layers in an equivalent fashion. The Conv1D layer operates independently across channels, enabling us to split its parameters across devices without incurring any communication overhead.
+To avoid additional cross-device communication, we use block-diagonal weights for the gates in the RG-LRU (see equations <a href="https://arxiv.org/html/2402.19427v1#S2.E1" title="Equation 1 ‣ 2.4 Real-Gated Linear Recurrent Unit (RG-LRU) ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>1</span></a> and <a href="https://arxiv.org/html/2402.19427v1#S2.E2" title="Equation 2 ‣ 2.4 Real-Gated Linear Recurrent Unit (RG-LRU) ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2</span></a>), instead of dense matrices. For all experiments in this paper, we use 16 blocks for both the recurrence gate and the input gate (such that <math alttext="W_{x}"><semantics><msub><mi>W</mi><mi>x</mi></msub><annotation>W_{x}</annotation></semantics></math> and <math alttext="W_{a}"><semantics><msub><mi>W</mi><mi>a</mi></msub><annotation>W_{a}</annotation></semantics></math> each have <math alttext="D_{RNN}^{2}/16"><semantics><mrow><msubsup><mi>D</mi><mrow><mi>R</mi><mo>​</mo><mi>N</mi><mo>​</mo><mi>N</mi></mrow><mn>2</mn></msubsup><mo>/</mo><mn>16</mn></mrow><annotation>D_{RNN}^{2}/16</annotation></semantics></math> parameters).
+The diagonal structure of the recurrence offers the same advantage as the Conv1D, allowing parameter sharding and computation without any communication. With this strategy, the recurrent block’s communication requirements are equivalent to those of the MLP block.</p>
+</div>
+</section>
+<section>
+<h5>Other considerations</h5>
+<div>
+<p>Optimizer states can consume significant memory, exceeding the size of the model parameters themselves.
+To address this, we employ ZeRO parallelism <cite>[Rajbhandari et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib47" title="">2020</a>]</cite>, distributing both optimizer states and model parameters across the batch shards.
+We also use bfloat16 representation for model parameters and activations, minimizing any data transfer overhead.</p>
+</div>
+</section>
+</section>
+<section>
+<h3>
+<span>4.2 </span>Efficient linear recurrences on device</h3>
+<div>
+<p>Current deep learning accelerators are optimized for classical architectures which are composed largely of matrix multiplications and convolutions.
+These operations have a high FLOPs-to-byte ratio, motivating the development of specialized hardware units like Nvidia GPUs’ TensorCores <cite>[Markidis et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib36" title="">2018</a>]</cite> and Google TPUs’ MXUs <cite>[Norrie et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib41" title="">2021</a>, Jouppi et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib27" title="">2021</a>, <a href="https://arxiv.org/html/2402.19427v1#bib.bib26" title="">2023</a>]</cite>.
+Classical RNNs also benefit from this due to their dense recurrence matrices.
+In contrast, our proposed RG-LRU layer, like other diagonal RNN models, has a low FLOPs-to-byte ratio.
+This fundamental difference poses a computational challenge, as existing accelerators lack optimization for such workloads.
+Since we run all our experiments on TPU-v3, we focus on developing an efficient implementation tailored to this device<span><sup>3</sup><span><span><sup>3</sup><span>3</span>The conclusions drawn here do not necessarily apply to other accelerators.</span></span></span>.</p>
+</div>
+<section>
+<h5>Challenges for linear diagonal RNNs</h5>
+<div>
+<p>One of the main challenges of utilizing a device like the TPU-v3 for the RG-LRU is that the update equation of the hidden state in eq. (<a href="https://arxiv.org/html/2402.19427v1#S2.E4" title="Equation 4 ‣ 2.4 Real-Gated Linear Recurrent Unit (RG-LRU) ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>4</span></a>) is a pure elementwise operation.
+For each element update it requires to load 6 bytes (assuming bfloat16 we need 2 bytes for each of the variables <math alttext="h_{t-1},a_{t},x_{t}"><semantics><mrow><msub><mi>h</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>,</mo><msub><mi>a</mi><mi>t</mi></msub><mo>,</mo><msub><mi>x</mi><mi>t</mi></msub></mrow><annotation>h_{t-1},a_{t},x_{t}</annotation></semantics></math>) and write 2 bytes (the hidden state <math alttext="h_{t}"><semantics><msub><mi>h</mi><mi>t</mi></msub><annotation>h_{t}</annotation></semantics></math>) while the computation only executes 6 FLOPs (number of arithmetic operations in eq. <a href="https://arxiv.org/html/2402.19427v1#S2.E4" title="Equation 4 ‣ 2.4 Real-Gated Linear Recurrent Unit (RG-LRU) ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>4</span></a>) per element.
+This translates to a low FLOPs-to-byte ratio of <math alttext="0.75"><semantics><mn>0.75</mn><annotation>0.75</annotation></semantics></math> – significantly below the device’s capacity for elementwise operations of <math alttext="4.2"><semantics><mn>4.2</mn><annotation>4.2</annotation></semantics></math> (see Appendix <a href="https://arxiv.org/html/2402.19427v1#A4.T3" title="Table 3 ‣ Appendix D Efficient Linear Recurrences on Device ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>3</span></a>).
+Execution time is therefore dominated by memory transfers between HBM and VMEM, making the computation memory bound.</p>
+</div>
+</section>
+<section>
+<h5>A custom linear scan</h5>
+<div>
+<p>To address this we have written a custom <a href="http://go/jax-pallas" title="">Pallas</a> kernel for the computation of eq. (<a href="https://arxiv.org/html/2402.19427v1#S2.E4" title="Equation 4 ‣ 2.4 Real-Gated Linear Recurrent Unit (RG-LRU) ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>4</span></a>) using a <em>linear scan</em>.
+This allows us to minimize memory transfers, by keeping the hidden state in VMEM all the time, and also to perform memory transfers in larger chunks rather than one at a time.
+In practice, this translates to almost 3x speed up over the native Jax implementation of the linear scan.
+Additionally, we observe 10-20% lower training times per step of the full Hawk model, relative to the same model using the native Jax implementation (see Appendix <a href="https://arxiv.org/html/2402.19427v1#A4.SS2" title="D.2 Scan runtimes ‣ Appendix D Efficient Linear Recurrences on Device ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>D.2</span></a> for more details.)</p>
+</div>
+</section>
+<section>
+<h5>Why we do not use convolutions or associative scans?</h5>
+<div>
+<p>The initial appeal of linear recurrence models stemmed from their high parallelizability, enabled by the associativity of their computations.
+This permitted efficient execution on device via convolutions <cite>[Gu et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib19" title="">2021b</a>]</cite> or prefix-sum algorithms (the associative scan) <cite>[Smith et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib52" title="">2022</a>]</cite>.
+However, the RG-LRU’s gating mechanism on <math alttext="a_{t}"><semantics><msub><mi>a</mi><mi>t</mi></msub><annotation>a_{t}</annotation></semantics></math> is not compatible with the convolutional view.
+Although we can still use the associative scan in principle, the associative scan reduces the number of FLOPs required but does not reduce memory overheads, which is our primary bottleneck in practice.
+Empirically we observe that on a TPU-v3 the associative scan is significantly slower that the native Jax linear scan (see Appendix <a href="https://arxiv.org/html/2402.19427v1#A4.SS2" title="D.2 Scan runtimes ‣ Appendix D Efficient Linear Recurrences on Device ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>D.2</span></a> for more details.)
+We speculate that the random access nature of the tree recombination of the parallel prefix-sum algorithm makes is poorly suited for the TPU architecture, leading to even slower memory transfers – the main bottleneck of this operation.</p>
+</div>
+</section>
+</section>
+<section>
+<h3>
+<span>4.3 </span>Training speed on longer sequences</h3>
+<figure>
+<div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(a)</span> </span><span>400m</span></figcaption>
+</figure>
+</div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(b)</span> </span><span>1B</span></figcaption>
+</figure>
+</div>
+<div></div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(c)</span> </span><span>7B</span></figcaption>
+</figure>
+</div>
+</div>
+<figcaption><span>Figure 3: </span>
+Training durations per step computed relative to our MQA baseline at 2K sequence length as we vary the model size and sequence length for Griffin and MQA.
+Let us note that as we increase the sequence length we lower the batch size proportionally, such that the total number of tokens per batch stays fixed.
+</figcaption>
+</figure>
+<div>
+<p>We compare the training speeds across different model sizes and sequence lengths to investigate the computational advantages of our models during training.
+For each model size, we keep the total number of tokens per batch fixed, meaning that as we increase the sequence length, we proportionally decrease the number of sequences.
+In Figure <a href="https://arxiv.org/html/2402.19427v1#S4.F3" title="Figure 3 ‣ 4.3 Training speed on longer sequences ‣ 4 Training Recurrent Models Efficiently on Device ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>3</span></a>, we plot the relative runtimes of our Griffin model compared to that of the MQA baseline at 2048 sequence length.
+At the lowest sequence length, the two models have similar training time, but as we increase the sequence length the Transformer becomes slower, while Griffin’s runtime remains the same.
+The drop in speed for the baseline is more pronounced at smaller model sizes and decreases at larger model sizes.
+This can be explained by the fact that all models contain a large number of linear layers.
+Their computation scales <math alttext="O(TD^{2})"><semantics><mrow><mi>O</mi><mo>​</mo><mrow><mo>(</mo><mrow><mi>T</mi><mo>​</mo><msup><mi>D</mi><mn>2</mn></msup></mrow><mo>)</mo></mrow></mrow><annotation>O(TD^{2})</annotation></semantics></math>, while the RG-LRU is <math alttext="O(TD)"><semantics><mrow><mi>O</mi><mo>​</mo><mrow><mo>(</mo><mrow><mi>T</mi><mo>​</mo><mi>D</mi></mrow><mo>)</mo></mrow></mrow><annotation>O(TD)</annotation></semantics></math> vs <math alttext="O(T^{2}D)"><semantics><mrow><mi>O</mi><mo>​</mo><mrow><mo>(</mo><mrow><msup><mi>T</mi><mn>2</mn></msup><mo>​</mo><mi>D</mi></mrow><mo>)</mo></mrow></mrow><annotation>O(T^{2}D)</annotation></semantics></math> of global attention.
+This means that as we increase the model width <math alttext="D"><semantics><mi>D</mi><annotation>D</annotation></semantics></math> compared to the sequence length <math alttext="T"><semantics><mi>T</mi><annotation>T</annotation></semantics></math>, the linear layers become the primary computational bottleneck, minimizing the efficiency gains from the RNN block.
+Therefore, replacing Transformers with Hawk or Griffin offers the most significant wall-clock time improvement when sequence length is sufficiently large relative to model width to ensure the attention computation constitutes a major portion of the total computation time. We also note that in practice, our MQA baseline has slightly fewer parameters than Griffin at the same model scale (and performs fewer FLOPs). This explains why Griffin trains slightly slower than our MQA baseline at 7B for short sequences.</p>
+</div>
+</section>
+</section>
+<section>
+<h2>
+<span>5 </span>Inference Speed</h2>
+<div>
+<p>Inference in LLMs is composed of two stages. In the “prefill” stage, we receive and process the prompt. This step is effectively performing a forward pass of the model.
+Since the prompt can be processed in parallel across the sequence, most model operations are compute bound during this stage.
+We therefore expect the relative speeds of Transformers and recurrent models during the prefill stage to be similar to the relative speeds of the same models during training, which we discussed in Section <a href="https://arxiv.org/html/2402.19427v1#S4" title="4 Training Recurrent Models Efficiently on Device ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>4</span></a>.</p>
+</div>
+<div>
+<p>Prefill is followed by a “decode” stage, in which we sample tokens auto-regressively from the model. As we show below, recurrent models have lower latency and higher throughput during the decoding stage, especially for longer sequence lengths where the key-value (KV) cache used in attention can get large.</p>
+</div>
+<div>
+<p>There are two main metrics to consider when evaluating inference speed.
+The first is latency, which measures the time taken to generate a specified number of tokens at a certain batch size.
+The second is throughput, which measures the largest number of tokens per second that can be generated on a single device when sampling a specified number of tokens. Since throughput is given by tokens sampled times batch size divided by latency, one can improve throughput either by reducing the latency or by reducing memory usage to enable the use of larger batch sizes on device. Latency can be useful to consider for real-time applications that require a quick response time. Throughput is also useful to consider as it can tell us the maximum number of tokens we could sample from a particular model in a given time. This property is useful when considering other language applications such as Reinforcement Learning from Human Feedback (RLHF) or scoring language model outputs such as done in AlphaCode <cite>[Li et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib34" title="">2022</a>]</cite> where being able to output a large number of tokens in a given time is an appealing feature.</p>
+</div>
+<section>
+<h3>
+<span>5.1 </span>A simple model of the decode step</h3>
+<div>
+<p>All components of language models are memory bound during decoding as long as batch size isn’t too big (i.e. <math alttext="B\lesssim 128"><semantics><mrow><mi>B</mi><mo>≲</mo><mn>128</mn></mrow><annotation>B\lesssim 128</annotation></semantics></math>- see Appendix <a href="https://arxiv.org/html/2402.19427v1#A6.SS1" title="F.1 Estimating memory-boundedness ‣ Appendix F Inference Speeds ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>F.1</span></a> for details) and we will assume this for the remainder of this section.
+The largest memory overheads of Transformers typically come from the parameters themselves and the KV cache.
+Therefore we can approximate the time required to generate a single token for each sequence in the batch <math alttext="B"><semantics><mi>B</mi><annotation>B</annotation></semantics></math> during decoding as the time needed to load these two quantities from memory:</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\textit{Time to sample next token}\approx\frac{\textit{param size}+\textit{batch size}\times\textit{cache size}}{\textit{memory bandwidth}}."><semantics><mrow><mrow><mtext>Time to sample next token</mtext><mo>≈</mo><mfrac><mrow><mtext>param size</mtext><mo>+</mo><mrow><mtext>batch size</mtext><mo>×</mo><mtext>cache size</mtext></mrow></mrow><mtext>memory bandwidth</mtext></mfrac></mrow><mo>.</mo></mrow><annotation>\textit{Time to sample next token}\approx\frac{\textit{param size}+\textit{batch size}\times\textit{cache size}}{\textit{memory bandwidth}}.</annotation></semantics></math></td>
+<td></td>
+<td><span>(5)</span></td>
+</tr></tbody>
+</table>
+<p>Here, <span>cache size</span> refers to either the size of the KV cache at batch size 1 (for Transformers), or to the size of the recurrent state at batch size 1 (for RNNs).</p>
+</div>
+<section>
+<h5>Cache sizes</h5>
+<div>
+<p>The difference in cache size relative to model parameters has important implications for sampling efficiency.
+In recurrent and local attention blocks, parameter loading is the primary bottleneck, (because the cache size is substantially smaller).
+In contrast, global attention’s KV cache scales with the sequence length <math alttext="T"><semantics><mi>T</mi><annotation>T</annotation></semantics></math> and can be comparable to, or even exceed, the size of the model parameters.
+This introduces considerable overhead when the sequence length <math alttext="T"><semantics><mi>T</mi><annotation>T</annotation></semantics></math> is large enough (as shown in <a href="https://arxiv.org/html/2402.19427v1#A6.SS4" title="F.4 Cache sizes ‣ Appendix F Inference Speeds ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>F.4</span></a>).
+Consequently, an equally sized recurrent model can exhibit substantially lower latency than a Transformer when <math alttext="T"><semantics><mi>T</mi><annotation>T</annotation></semantics></math> is large. Note however that as the model size grows the sequence length at which we see latency benefits (where the KV cache size is comparable to parameter size) also increases.
+It is important to note that, as well as improving latency, having a small recurrent state can also increase the largest batch size that fits in memory on a single device, leading to higher throughput.</p>
+</div>
+<figure>
+<div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(a)</span> </span><span>Latency empty prefill</span></figcaption>
+</figure>
+</div>
+<div></div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(b)</span> </span><span>Latency 4k prefill</span></figcaption>
+</figure>
+</div>
+</div>
+<figcaption><span>Figure 4: </span>Latency of different 1B parameter models for a range of sequence lengths for (a) sampling from an empty prefill and (b) sampling from a prefill of 4k tokens.</figcaption>
+</figure>
+</section>
+</section>
+<section>
+<h3>
+<span>5.2 </span>Results</h3>
+<div>
+<p>Here, we look at inference results for models of size 1B parameters. For our baseline, we compare against a MQA Transformer, which is significantly faster during inference than the standard MHA Transformer often used in the literature. The models that we compare are: i) <span>MQA Transformer</span>, ii) Hawk, and iii) Griffin. For comparing different models we report both latency and throughput.</p>
+</div>
+<section>
+<h5>Latency</h5>
+<div>
+<p>We compare the latency for models with a batch size of 16 with an empty prefill as well as a prefill of 4096 tokens as seen in Figure <a href="https://arxiv.org/html/2402.19427v1#S5.F4" title="Figure 4 ‣ Cache sizes ‣ 5.1 A simple model of the decode step ‣ 5 Inference Speed ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>4</span></a>.
+Hawk and Griffin achieve faster sampling latency than MQA Transformers for long sequences. This is particularly noticeable as the sequence length and the prefill length (which affect the size of the KV cache) are increased. Griffin achieves similar latency to Hawk, demonstrating the excellent compatibility of linear recurrences and local attention.</p>
+</div>
+</section>
+<section>
+<h5>Throughput</h5>
+<div>
+<p>We compare the maximum throughput (tokens/s) for the same models when sampling 512, 1024, 2048 and 4196 tokens following an empty prompt in Figure <a href="https://arxiv.org/html/2402.19427v1#S1.F1.sf2" title="Figure 1(b) ‣ Figure 1 ‣ 1 Introduction ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>1(b)</span></a>.
+We see that both Griffin and Hawk achieve significantly higher throughput than the MQA Transformer baseline.
+This is partially due to recurrent models having lower latency but also primarily occurs because Griffin and Hawk can fit larger batch sizes than the MQA Transformer on a single device, since their cache size is smaller. Hawk achieves higher throughputs than Griffin, since the size of the local attention cache eventually becomes comparable to the size of the parameters when the batch size is large.</p>
+</div>
+</section>
+</section>
+</section>
+<section>
+<h2>
+<span>6 </span>Long Context Modeling</h2>
+<div>
+<p>In this section, we explore the effectiveness of Hawk and Griffin to use longer contexts to improve their next token prediction, and investigate their extrapolation capabilities during inference.
+Additionally, we explore our models’ performance on tasks that require copying and retrieval capabilities, both for models that are trained on such tasks, as well as when testing for these capabilities with our pre-trained language models.</p>
+</div>
+<section>
+<h3>
+<span>6.1 </span>Improving next token prediction with longer contexts</h3>
+<div>
+<p>We investigate the ability of Hawk and Griffin to improve their predictions with longer contexts. In particular, we evaluate our trained models by measuring the loss on a held-out books dataset across a range of sequence lengths. Using these long documents allows us to evaluate the ability of the models to extrapolate, i.e. the ability to accurately predict the next token given contexts that are longer than those seen during training.</p>
+</div>
+<figure>
+<div>
+<div><img alt="Refer to caption"/></div>
+<div><img alt="Refer to caption"/></div>
+</div>
+<figcaption><span>Figure 5: </span>
+Performance of various 1B parameter models on a held-out evaluation set of books.
+On the left, the models have been trained with sequence length 2048, and on the right with sequence lengths of respectively 2048 (2k) and 8192 (8k).
+Hawk and Griffin are able to extrapolate to significantly longer sequences than the Transformer baselines, and further improve performance when trained on longer sequences.
+</figcaption>
+</figure>
+<div>
+<p>In Transformers, this ability to extrapolate is largely determined by the positional encoding used for the attention layers <cite>[Kazemnejad et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib32" title="">2024</a>]</cite>.
+For recurrent models, it is instead dictated by the capacity of the model to keep refining the representation stored in the recurrence state as the context becomes longer.
+From the left plot of Figure <a href="https://arxiv.org/html/2402.19427v1#S6.F5" title="Figure 5 ‣ 6.1 Improving next token prediction with longer contexts ‣ 6 Long Context Modeling ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>5</span></a>, we observe that, up to some maximal length, both Hawk and Griffin improve next token prediction given longer contexts, and they are overall able to extrapolate to significantly longer sequences (at least 4x longer) than they were trained on.
+In particular, Griffin extrapolates remarkably well even when using RoPE <cite>[Su et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib53" title="">2021</a>]</cite> for the local attention layers.</p>
+</div>
+<div>
+<p>The results so far evaluate models that have been trained on sequences of 2048 tokens.
+In order to assess whether our models can also effectively learn from longer contexts, we train 1B parameter models on sequences of 8192 (8k) tokens on MassiveText, and compare them to models trained on the same dataset but on sequences of length 2048 (2k) tokens.
+We keep the total number of training tokens the same across the models by reducing the batch size by a factor of 4 for the models trained on the sequence length of 8192 (while keeping the number of training steps fixed).
+As illustrated in the right plot of Figure <a href="https://arxiv.org/html/2402.19427v1#S6.F5" title="Figure 5 ‣ 6.1 Improving next token prediction with longer contexts ‣ 6 Long Context Modeling ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>5</span></a>, we find that Hawk-8k and Griffin-8k do achieve lower evaluation loss for sequences of length 8192 or larger, compared to Hawk-2k and Griffin-2k.
+This indicates that Hawk and Griffin are able to learn to use longer contexts during training.
+Interestingly, when evaluating at short sequence lengths, we find that Hawk-2k and Griffin-2k perform slightly better than Hawk-8k and Griffin-8k.
+This suggests that the training sequence length should be carefully chosen according to the intended downstream use of the model.</p>
+</div>
+</section>
+<section>
+<h3>
+<span>6.2 </span>Copy and retrieval capabilities</h3>
+<div>
+<p>Recent work <cite>[Jelassi et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib24" title="">2024</a>]</cite> has shown that Transformers can be significantly more efficient than state space models (SSMs), a popular new family of RNNs, at learning synthetic tasks such as copying the context or retrieving relevant tokens from the context. Additionally, <cite>Jelassi et al. [<a href="https://arxiv.org/html/2402.19427v1#bib.bib24" title="">2024</a>]</cite> showed that pre-trained Transformers such as Pythia <cite>[Biderman et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib4" title="">2023</a>]</cite> are much better at copying and retrieval tasks at evaluation time compared to pre-trained SSM models such as Mamba <cite>[Gu and Dao, <a href="https://arxiv.org/html/2402.19427v1#bib.bib16" title="">2023</a>]</cite>. In this section, we investigate the efficiency of Griffin and Hawk in learning how to copy and retrieve tokens from the context. Additionally, we evaluate pre-trained Hawk and Griffin models on a phone number lookup task designed to test both copying and retrieval capabilities.</p>
+</div>
+<figure>
+<div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(a)</span> </span><span>Selective Copying Task</span></figcaption>
+</figure>
+</div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(b)</span> </span><span>Induction Heads Task</span></figcaption>
+</figure>
+</div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(c)</span> </span><span>Phonebook Lookup Task</span></figcaption>
+</figure>
+</div>
+</div>
+<figcaption><span>Figure 6: </span>Exploring the copying and retrieval capabilities of Hawk and Griffin on three synthetic tasks. Figures (a) and (b) show the performance of 5 layer deep models on a held out eval set when explicitly trained on these tasks. Figure (c) shows the performance on a phone number lookup task when evaluating our pre-trained 7B Hawk and Griffin models against our 6B MQA Transformer baseline.</figcaption>
+</figure>
+<section>
+<h5>Training on synthetic tasks</h5>
+<div>
+<p>To investigate the efficiency of learning how to copy and retrieve relevant tokens from the context, we train on two synthetic tasks: Selective Copying and Induction Heads. To be able to compare Transformers with Hawk and Griffin, we consider 5-block deep networks with model dimension 64, totalling roughly 250K parameters, where Griffin uses a single local attention in the middle of the network, in the third block.</p>
+<ul>
+<li>
+<span>•</span>
+<div>
+<p><span>Selective copying task</span>: In this task, the model needs to learn to copy data tokens from a sequence while ignoring noise tokens from the context. See Appendix <a href="https://arxiv.org/html/2402.19427v1#A8" title="Appendix H Additional Details of the Copy and Retrieval Tasks ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>H</span></a> for more details on the setup for this task. This task is inspired by <cite>Gu and Dao [<a href="https://arxiv.org/html/2402.19427v1#bib.bib16" title="">2023</a>]</cite>, where the authors showed that Mamba was able to solve this task better than previously proposed SSMs. We use a vocabulary size of 16, and train on sequences of length 1024, containing 16 data tokens (randomly sampled from the vocabulary and at random locations), with the rest of the tokens set to the noise token. Griffin uses a local attention window size of 512. 
+<br/></p>
+</div>
+</li>
+<li>
+<span>•</span>
+<div>
+<p><span>Induction heads</span>: In this task, the model needs to learn to recall the token immediately following a special token. This requires the model to learn the special token, and retrieve the token immediately following it in the context. If the model is able to learn the task, it should be able to extrapolate to significantly longer sequences than it was trained for. We use a vocabulary size of 16 and train on sequences of length 256 where the tokens are sampled randomly, and we randomly sample the location of the special token in the sequence. Griffin uses a local attention window of size 128.</p>
+</div>
+</li>
+</ul>
+</div>
+<div>
+<p>We show our results in Figure <a href="https://arxiv.org/html/2402.19427v1#S6.F6" title="Figure 6 ‣ 6.2 Copy and retrieval capabilities ‣ 6 Long Context Modeling ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>6</span></a>.
+On the Selective Copying task, we find that all 3 models are able to solve the task perfectly.
+When comparing speed of learning on this task, we find Hawk to be significantly slower than Transformers, similar to the observation made by <cite>Jelassi et al. [<a href="https://arxiv.org/html/2402.19427v1#bib.bib24" title="">2024</a>]</cite>, where the authors showed that Mamba was significantly slower to learn on similar tasks.
+Interestingly though, Griffin shows almost no slowdown, effectively matching the speed of learning of Transformers, despite using only a single local attention layer.</p>
+</div>
+<div>
+<p>On the Induction Heads task, while all 3 models can solve the task perfectly up to the training sequence length, our Transformer baseline is not able to extrapolate to longer sequences during evaluation.
+While our MQA baseline uses RoPE, <cite>Gu and Dao [<a href="https://arxiv.org/html/2402.19427v1#bib.bib16" title="">2023</a>]</cite> had similar observation for Transformers with a range of positional encodings.
+We find that Hawk is able to perfectly extrapolate on this task to evaluation sequences several orders of magnitude longer than the training sequence length.
+Notably, Griffin, with its local attention, also demonstrated exceptional ability to extrapolate on this task.</p>
+</div>
+</section>
+<section>
+<h5>Evaluating pre-trained models</h5>
+<div>
+<p>We now evaluate whether copying and retrieval capabilities naturally emerge in our pre-trained models. We consider our 7B Hawk and Griffin models and our 6B MQA Transformer baseline, all trained on 300B tokens on the MassiveText dataset.
+We consider the same phonebook lookup task introduced in <cite>Jelassi et al. [<a href="https://arxiv.org/html/2402.19427v1#bib.bib24" title="">2024</a>]</cite>, where we provide to the model a synthetic phonebook containing names and numbers, and the model is asked to retrieve the correct phone number given a name.
+The prompt to the model is a phonebook consisting of randomly sampled list of names and numbers of a certain length, followed by two randomly sampled examples of the task, followed by a randomly sampled name from the phonebook for which the model needs to retrieve the correct phone number.</p>
+</div>
+<div>
+<p>From Figure <a href="https://arxiv.org/html/2402.19427v1#S6.F6" title="Figure 6 ‣ 6.2 Copy and retrieval capabilities ‣ 6 Long Context Modeling ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>6</span></a>(c), we see that while Hawk can do reasonably well on the task for very short phonebook lengths, it fails to memorize and retrieve the correct phone number when the phonebook length grows, similar to the observation made by <cite>Jelassi et al. [<a href="https://arxiv.org/html/2402.19427v1#bib.bib24" title="">2024</a>]</cite> on the Mamba model’s performance on this task. This is not particularly surprising since Hawk uses a small fixed-size state. Our Transformer baseline can almost perfectly solve this task up to the training sequence length, but fails to retrieve the correct phone number for context lengths longer than the training sequence length. Interestingly, Griffin can perfectly solve this task up to a context length that matches its local attention window size of 1024, in spite of using only a single local attention layer. Once the context length is long enough such that the local attention window does not cover the whole phonebook, performance starts to degrade. Griffin is also able to extrapolate better to longer sequence lengths compared to Transformers.
+While the performance of Griffin is promising for the ability of models with fixed-size state to solve copying and retrieval tasks, our results suggest more work is needed to improve these capabilities for such models.</p>
+</div>
+</section>
+</section>
+</section>
+<section>
+<h2>
+<span>7 </span>Related Works</h2>
+<div>
+<p>The Transformer architecture has become a more scalable alternative to RNNs.
+Transformers achieve superior scalability through fully parallelized training, contrasting with the inherent limitations of RNNs.
+Due to their sequential processing structure, classical RNNs suffer from slow training speeds during both forward and backward propagation <cite>[Werbos, <a href="https://arxiv.org/html/2402.19427v1#bib.bib60" title="">1990</a>]</cite>.
+To mitigate this issue, researchers have explored alternative RNN-based methods.
+Notable examples include Quasi-RNNs <cite>[Bradbury et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib5" title="">2016</a>]</cite>, which combine convolutions and linear RNNs for greater parallelization, and the use of input-based gating mechanisms to parallelize linear RNN training <cite>[Martin and Cundy, <a href="https://arxiv.org/html/2402.19427v1#bib.bib37" title="">2017</a>]</cite>.</p>
+</div>
+<div>
+<p>State-space Models (SSMs) have recently emerged as a powerful tool for modeling long input sequences.
+They demonstrated strong performance on tasks from the long-range arena benchmark <cite>[Tay et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib56" title="">2020</a>]</cite>, and audio generation <cite>[Goel et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib15" title="">2022</a>]</cite>.
+SSMs successfully integrate concepts from classical state-space models <cite>[Kalman, <a href="https://arxiv.org/html/2402.19427v1#bib.bib28" title="">1960</a>]</cite> with those of RNNs.
+Their reliance on linear recurrences allows for efficient hidden state computation, either through parallel scan operations or convolutions, resulting in training speeds comparable to Transformer models.
+The S4 <cite>[Gu et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib18" title="">2021a</a>]</cite> model proposed a sophisticated parameterization called <span>normal plus low-rank</span> to diagonalize the recurrence computation.
+The S4D parametrized the SSM directly with a diagonal state matrix and showed that it performed just as well while being much simpler <cite>[Gu et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib20" title="">2022</a>]</cite>. S5 also diagonalized the recurrence, and showed that the recurrence can be computed using the associative scan <cite>[Smith et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib52" title="">2022</a>]</cite>.
+The H3 model <cite>[Dao et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib11" title="">2022b</a>]</cite> generalizes the recurrent interpretation of linear attention <cite>[Katharopoulos et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib30" title="">2020</a>]</cite>.
+Hyena <cite>[Poli et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib45" title="">2023</a>]</cite> uses a similar architecture, but replaces the S4D layer with a global convolution kernel parametrized by an MLP.
+RetNet <cite>[Sun et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib54" title="">2023</a>]</cite> uses a simpler SSM design with a gating mechanism which allows them to parallelize the computation using a variant of multi-head attention.
+<cite>Orvieto et al. [<a href="https://arxiv.org/html/2402.19427v1#bib.bib43" title="">2023b</a>]</cite> systematically analyzed and ablated multiple modifications to standard RNNs.
+Their finding showed that through better parameterization and initialization simplified linear RNNs (the LRU), perform just as well as other SSMs variants on various long-range tasks.
+RWKV <cite>[Peng et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib44" title="">2023</a>]</cite> is a recent RNN, shown to be competitive on language modeling tasks, based on another linear attention approximation inspired by the attention-free Transformer <cite>[Zhai et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib63" title="">2021</a>]</cite>.
+Concurrent to our work <cite>Gu and Dao [<a href="https://arxiv.org/html/2402.19427v1#bib.bib16" title="">2023</a>]</cite> developed an SSM architecture called Mamba with an input dependant selection mechanism and showed that it achieves performance comparable to Transformers with efficient inference. Several extensions of Mamba have been proposed <cite>[Wang et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib59" title="">2024</a>, Zhu et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib65" title="">2024</a>]</cite> for different applications. An input-dependent gating similar to Mamba was also proposed by Gateloop <cite>[Katsch, <a href="https://arxiv.org/html/2402.19427v1#bib.bib31" title="">2023</a>]</cite>.</p>
+</div>
+<div>
+<p>Linear attention <cite>[Katharopoulos et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib30" title="">2020</a>]</cite> offers a computationally efficient approximation of the self-attention mechanism by linearizing the attention, which
+can be computed recurrently as a linear RNN.
+While this approach significantly reduces computational cost compared to full attention, it often comes with a trade-off in model performance.
+Flash Attention <cite>[Dao et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib10" title="">2022a</a>]</cite> improves the training speed of attention on GPUs by making efficient use of the memory hierarchy.
+Another approach to reducing the computational cost of global attention, which is becoming increasingly more popular, is using sparse-local attention <cite>[Child et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib8" title="">2019</a>]</cite> or sliding window attention <cite>[Jiang et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib25" title="">2023</a>]</cite>.</p>
+</div>
+</section>
+<section>
+<h2>
+<span>8 </span>Conclusion</h2>
+<div>
+<p>This work introduces Hawk; a recurrent model incorporating a novel gated linear recurrent layer, the RG-LRU. We also introduce Griffin; a hybrid model which mixes the RG-LRU layer with local attention.
+These models demonstrate exceptional language modeling performance across varying scales, with held-out loss exhibiting power-law scaling as compute resources increase. Hawk exceeds the reported performance of Mamba on downstream tasks when trained on half as many tokens, while Griffin slightly exceeds the performance of Llama-2 when trained on over 6 times fewer tokens.
+Furthermore, we empirically validate the inference-time advantages of Hawk and Griffin and observe reduced latency and significantly increased throughput compared to our Transformer baselines.
+Lastly, Hawk and Griffin exhibit the ability to extrapolate on longer sequences than they have been trained on and are capable of efficiently learning to copy and retrieve data over long horizons.
+These findings strongly suggest that our proposed models offer a powerful and efficient
+alternative to Transformers with global attention.</p>
+</div>
+</section>
+<section>
+<h2>Acknowledgements</h2>
+<div>
+<p>We thank Adam Paszke, Sharad Vikram, Trevor Gale, Sebastian Borgeaud, George Scrivener, Raia Hadsell, Oriol Vinyals, Toby Boyd, Zhifeng Chen, Chris Dyer, Kelvin Xu, Andriy Mnih for their guidance and advice.
+We make use of the DeepMind Jax ecosystem <cite>[Bradbury et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib6" title="">2018</a>]</cite> and especially thank Andy Brock for building the internal framework we used for training and evaluating our models.</p>
+</div>
+</section>
+<section>
+<h2>References</h2>
+<ul>
+<li>
+<span>Achiam et al. [2023]</span>
+<span>
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida,
+J. Altenschmidt, S. Altman, S. Anadkat, et al.
+
+</span>
+<span>GPT-4 technical report.
+
+</span>
+<span><em>arXiv preprint arXiv:2303.08774</em>, 2023.
+
+</span>
+</li>
+<li>
+<span>Bahdanau et al. [2014]</span>
+<span>
+D. Bahdanau, K. Cho, and Y. Bengio.
+
+</span>
+<span>Neural machine translation by jointly learning to align and
+translate.
+
+</span>
+<span><em>arXiv preprint arXiv:1409.0473</em>, 2014.
+
+</span>
+</li>
+<li>
+<span>Beltagy et al. [2020]</span>
+<span>
+I. Beltagy, M. E. Peters, and A. Cohan.
+
+</span>
+<span>Longformer: The long-document transformer.
+
+</span>
+<span><em>arXiv preprint arXiv:2004.05150</em>, 2020.
+
+</span>
+</li>
+<li>
+<span>Biderman et al. [2023]</span>
+<span>
+S. Biderman, H. Schoelkopf, Q. G. Anthony, H. Bradley, K. O’Brien,
+E. Hallahan, M. A. Khan, S. Purohit, U. S. Prashanth, E. Raff, et al.
+
+</span>
+<span>Pythia: A suite for analyzing large language models across training
+and scaling.
+
+</span>
+<span>In <em>International Conference on Machine Learning</em>, pages
+2397–2430. PMLR, 2023.
+
+</span>
+</li>
+<li>
+<span>Bradbury et al. [2016]</span>
+<span>
+J. Bradbury, S. Merity, C. Xiong, and R. Socher.
+
+</span>
+<span>Quasi-recurrent neural networks.
+
+</span>
+<span><em>arXiv preprint arXiv:1611.01576</em>, 2016.
+
+</span>
+</li>
+<li>
+<span>Bradbury et al. [2018]</span>
+<span>
+J. Bradbury, R. Frostig, P. Hawkins, M. J. Johnson, C. Leary, D. Maclaurin,
+G. Necula, A. Paszke, J. VanderPlas, S. Wanderman-Milne, and Q. Zhang.
+
+</span>
+<span>JAX: composable transformations of Python+NumPy programs,
+2018.
+
+</span>
+<span>URL <a href="http://github.com/google/jax" title="">http://github.com/google/jax</a>.
+
+</span>
+</li>
+<li>
+<span>Brown et al. [2020]</span>
+<span>
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal,
+A. Neelakantan, P. Shyam, G. Sastry, A. Askell, et al.
+
+</span>
+<span>Language models are few-shot learners.
+
+</span>
+<span>In <em>Advances in Neural Information Processing Systems</em>,
+volume 33, pages 1877–1901, 2020.
+
+</span>
+</li>
+<li>
+<span>Child et al. [2019]</span>
+<span>
+R. Child, S. Gray, A. Radford, and I. Sutskever.
+
+</span>
+<span>Generating long sequences with sparse transformers.
+
+</span>
+<span><em>arXiv preprint arXiv:1904.10509</em>, 2019.
+
+</span>
+</li>
+<li>
+<span>Chung et al. [2014]</span>
+<span>
+J. Chung, C. Gulcehre, K. Cho, and Y. Bengio.
+
+</span>
+<span>Empirical evaluation of gated recurrent neural networks on sequence
+modeling.
+
+</span>
+<span><em>arXiv preprint arXiv:1412.3555</em>, 2014.
+
+</span>
+</li>
+<li>
+<span>Dao et al. [2022a]</span>
+<span>
+T. Dao, D. Fu, S. Ermon, A. Rudra, and C. Ré.
+
+</span>
+<span>Flashattention: Fast and memory-efficient exact attention with
+io-awareness.
+
+</span>
+<span>In <em>Advances in Neural Information Processing Systems</em>,
+volume 35, pages 16344–16359, 2022a.
+
+</span>
+</li>
+<li>
+<span>Dao et al. [2022b]</span>
+<span>
+T. Dao, D. Y. Fu, K. K. Saab, A. W. Thomas, A. Rudra, and C. Ré.
+
+</span>
+<span>Hungry hungry hippos: Towards language modeling with state space
+models.
+
+</span>
+<span><em>arXiv preprint arXiv:2212.14052</em>, 2022b.
+
+</span>
+</li>
+<li>
+<span>Dauphin et al. [2017]</span>
+<span>
+Y. N. Dauphin, A. Fan, M. Auli, and D. Grangier.
+
+</span>
+<span>Language modeling with gated convolutional networks.
+
+</span>
+<span>In <em>International Conference on Machine Learning</em>, pages
+933–941. PMLR, 2017.
+
+</span>
+</li>
+<li>
+<span>Elman [1990]</span>
+<span>
+J. L. Elman.
+
+</span>
+<span>Finding structure in time.
+
+</span>
+<span><em>Cognitive Science</em>, 14(2):179–211, 1990.
+
+</span>
+</li>
+<li>
+<span>Gemini Team Google [2023]</span>
+<span>
+Gemini Team Google.
+
+</span>
+<span>Gemini: a family of highly capable multimodal models.
+
+</span>
+<span><em>arXiv preprint arXiv:2312.11805</em>, 2023.
+
+</span>
+</li>
+<li>
+<span>Goel et al. [2022]</span>
+<span>
+K. Goel, A. Gu, C. Donahue, and C. Ré.
+
+</span>
+<span>It’s raw! audio generation with state-space models.
+
+</span>
+<span>In <em>International Conference on Machine Learning</em>, pages
+7616–7633, 2022.
+
+</span>
+</li>
+<li>
+<span>Gu and Dao [2023]</span>
+<span>
+A. Gu and T. Dao.
+
+</span>
+<span>Mamba: Linear-time sequence modeling with selective state spaces.
+
+</span>
+<span><em>arXiv preprint arXiv:2312.00752</em>, 2023.
+
+</span>
+</li>
+<li>
+<span>Gu et al. [2020]</span>
+<span>
+A. Gu, T. Dao, S. Ermon, A. Rudra, and C. Ré.
+
+</span>
+<span>Hippo: Recurrent memory with optimal polynomial projections.
+
+</span>
+<span>In <em>Advances in Neural Information Processing Systems</em>,
+volume 33, pages 1474–1487, 2020.
+
+</span>
+</li>
+<li>
+<span>Gu et al. [2021a]</span>
+<span>
+A. Gu, K. Goel, and C. Ré.
+
+</span>
+<span>Efficiently modeling long sequences with structured state spaces.
+
+</span>
+<span><em>arXiv preprint arXiv:2111.00396</em>, 2021a.
+
+</span>
+</li>
+<li>
+<span>Gu et al. [2021b]</span>
+<span>
+A. Gu, I. Johnson, K. Goel, K. Saab, T. Dao, A. Rudra, and C. Ré.
+
+</span>
+<span>Combining recurrent, convolutional, and continuous-time models with
+linear state space layers.
+
+</span>
+<span>In <em>Advances in Neural Information Processing Systems</em>,
+volume 34, pages 572–585, 2021b.
+
+</span>
+</li>
+<li>
+<span>Gu et al. [2022]</span>
+<span>
+A. Gu, A. Gupta, K. Goel, and C. Ré.
+
+</span>
+<span>On the parameterization and initialization of diagonal state space
+models.
+
+</span>
+<span><em>arXiv preprint arXiv:2206.11893</em>, 2022.
+
+</span>
+</li>
+<li>
+<span>Hendrycks and Gimpel [2016]</span>
+<span>
+D. Hendrycks and K. Gimpel.
+
+</span>
+<span>Gaussian error linear units (gelus).
+
+</span>
+<span><em>arXiv preprint arXiv:1606.08415</em>, 2016.
+
+</span>
+</li>
+<li>
+<span>Hochreiter and Schmidhuber [1997]</span>
+<span>
+S. Hochreiter and J. Schmidhuber.
+
+</span>
+<span>Long short-term memory.
+
+</span>
+<span><em>Neural Computation</em>, 9(8):1735–1780, 1997.
+
+</span>
+</li>
+<li>
+<span>Hoffmann et al. [2022]</span>
+<span>
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford,
+D. d. L. Casas, L. A. Hendricks, J. Welbl, A. Clark, et al.
+
+</span>
+<span>Training compute-optimal large language models.
+
+</span>
+<span><em>arXiv preprint arXiv:2203.15556</em>, 2022.
+
+</span>
+</li>
+<li>
+<span>Jelassi et al. [2024]</span>
+<span>
+S. Jelassi, D. Brandfonbrener, S. M. Kakade, and E. Malach.
+
+</span>
+<span>Repeat after me: Transformers are better than state space models at
+copying.
+
+</span>
+<span><em>arXiv preprint arXiv:2402.01032</em>, 2024.
+
+</span>
+</li>
+<li>
+<span>Jiang et al. [2023]</span>
+<span>
+A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. d. l.
+Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier, et al.
+
+</span>
+<span>Mistral 7b.
+
+</span>
+<span><em>arXiv preprint arXiv:2310.06825</em>, 2023.
+
+</span>
+</li>
+<li>
+<span>Jouppi et al. [2023]</span>
+<span>
+N. Jouppi, G. Kurian, S. Li, P. Ma, R. Nagarajan, L. Nai, N. Patil,
+S. Subramanian, A. Swing, B. Towles, et al.
+
+</span>
+<span>Tpu v4: An optically reconfigurable supercomputer for machine
+learning with hardware support for embeddings.
+
+</span>
+<span>In <em>Proceedings of the 50th Annual International Symposium on
+Computer Architecture</em>, pages 1–14, 2023.
+
+</span>
+</li>
+<li>
+<span>Jouppi et al. [2021]</span>
+<span>
+N. P. Jouppi, D. H. Yoon, M. Ashcraft, M. Gottscho, T. B. Jablin, G. Kurian,
+J. Laudon, S. Li, P. Ma, X. Ma, et al.
+
+</span>
+<span>Ten lessons from three generations shaped google’s tpuv4i:
+Industrial product.
+
+</span>
+<span>In <em>2021 ACM/IEEE 48th Annual International Symposium on
+Computer Architecture (ISCA)</em>, pages 1–14. IEEE, 2021.
+
+</span>
+</li>
+<li>
+<span>Kalman [1960]</span>
+<span>
+R. E. Kalman.
+
+</span>
+<span>A new approach to linear filtering and prediction problems.
+
+</span>
+<span><em>Journal of Basic Engineering</em>, 82, 1960.
+
+</span>
+</li>
+<li>
+<span>Kaplan et al. [2020]</span>
+<span>
+J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child,
+S. Gray, A. Radford, J. Wu, and D. Amodei.
+
+</span>
+<span>Scaling laws for neural language models.
+
+</span>
+<span><em>arXiv preprint arXiv:2001.08361</em>, 2020.
+
+</span>
+</li>
+<li>
+<span>Katharopoulos et al. [2020]</span>
+<span>
+A. Katharopoulos, A. Vyas, N. Pappas, and F. Fleuret.
+
+</span>
+<span>Transformers are RNNs: Fast autoregressive transformers with linear
+attention.
+
+</span>
+<span>In <em>International Conference on Machine Learning</em>, pages
+5156–5165. PMLR, 2020.
+
+</span>
+</li>
+<li>
+<span>Katsch [2023]</span>
+<span>
+T. Katsch.
+
+</span>
+<span>Gateloop: Fully data-controlled linear recurrence for sequence
+modeling.
+
+</span>
+<span><em>arXiv preprint arXiv:2311.01927</em>, 2023.
+
+</span>
+</li>
+<li>
+<span>Kazemnejad et al. [2024]</span>
+<span>
+A. Kazemnejad, I. Padhi, K. Natesan Ramamurthy, P. Das, and S. Reddy.
+
+</span>
+<span>The impact of positional encoding on length generalization in
+transformers.
+
+</span>
+<span><em>Advances in Neural Information Processing Systems</em>, 36, 2024.
+
+</span>
+</li>
+<li>
+<span>LeCun et al. [2002]</span>
+<span>
+Y. LeCun, L. Bottou, G. B. Orr, and K.-R. Müller.
+
+</span>
+<span>Efficient backprop.
+
+</span>
+<span>In <em>Neural Networks: Tricks of the Trade</em>, pages 9–50.
+Springer, 2002.
+
+</span>
+</li>
+<li>
+<span>Li et al. [2022]</span>
+<span>
+Y. Li, D. Choi, J. Chung, N. Kushman, J. Schrittwieser, R. Leblond, T. Eccles,
+J. Keeling, F. Gimeno, A. Dal Lago, et al.
+
+</span>
+<span>Competition-level code generation with alphacode.
+
+</span>
+<span><em>Science</em>, 378(6624):1092–1097, 2022.
+
+</span>
+</li>
+<li>
+<span>Loshchilov and Hutter [2017]</span>
+<span>
+I. Loshchilov and F. Hutter.
+
+</span>
+<span>Decoupled weight decay regularization.
+
+</span>
+<span><em>arXiv preprint arXiv:1711.05101</em>, 2017.
+
+</span>
+</li>
+<li>
+<span>Markidis et al. [2018]</span>
+<span>
+S. Markidis, S. W. Der Chien, E. Laure, I. B. Peng, and J. S. Vetter.
+
+</span>
+<span>Nvidia tensor core programmability, performance &amp; precision.
+
+</span>
+<span>In <em>2018 IEEE international parallel and distributed processing
+symposium workshops (IPDPSW)</em>, pages 522–531. IEEE, 2018.
+
+</span>
+</li>
+<li>
+<span>Martin and Cundy [2017]</span>
+<span>
+E. Martin and C. Cundy.
+
+</span>
+<span>Parallelizing linear recurrent neural nets over sequence length.
+
+</span>
+<span><em>arXiv preprint arXiv:1709.04057</em>, 2017.
+
+</span>
+</li>
+<li>
+<span>Mehta et al. [2022]</span>
+<span>
+H. Mehta, A. Gupta, A. Cutkosky, and B. Neyshabur.
+
+</span>
+<span>Long range language modeling via gated state spaces.
+
+</span>
+<span><em>arXiv preprint arXiv:2206.13947</em>, 2022.
+
+</span>
+</li>
+<li>
+<span>Mikolov et al. [2010]</span>
+<span>
+T. Mikolov, M. Karafiát, L. Burget, J. Cernocký, and S. Khudanpur.
+
+</span>
+<span>Recurrent neural network based language model.
+
+</span>
+<span>In <em>INTERSPEECH 11th Annual Conference of the International
+Speech Communication Association</em>, pages 1045–1048, 2010.
+
+</span>
+</li>
+<li>
+<span>Narayanan et al. [2021]</span>
+<span>
+D. Narayanan, M. Shoeybi, J. Casper, P. LeGresley, M. Patwary, V. Korthikanti,
+D. Vainbrand, P. Kashinkunti, J. Bernauer, B. Catanzaro, et al.
+
+</span>
+<span>Efficient large-scale language model training on gpu clusters using
+megatron-lm.
+
+</span>
+<span>In <em>Proceedings of the International Conference for High
+Performance Computing, Networking, Storage and Analysis</em>, pages 1–15, 2021.
+
+</span>
+</li>
+<li>
+<span>Norrie et al. [2021]</span>
+<span>
+T. Norrie, N. Patil, D. H. Yoon, G. Kurian, S. Li, J. Laudon, C. Young,
+N. Jouppi, and D. Patterson.
+
+</span>
+<span>The design process for Google’s training chips: TPUv2 and
+TPUv3.
+
+</span>
+<span><em>IEEE Micro</em>, 41(2):56–63, 2021.
+
+</span>
+</li>
+<li>
+<span>Orvieto et al. [2023a]</span>
+<span>
+A. Orvieto, S. De, C. Gulcehre, R. Pascanu, and S. L. Smith.
+
+</span>
+<span>On the universality of linear recurrences followed by nonlinear
+projections.
+
+</span>
+<span><em>arXiv preprint arXiv:2307.11888</em>, 2023a.
+
+</span>
+</li>
+<li>
+<span>Orvieto et al. [2023b]</span>
+<span>
+A. Orvieto, S. L. Smith, A. Gu, A. Fernando, C. Gulcehre, R. Pascanu, and
+S. De.
+
+</span>
+<span>Resurrecting recurrent neural networks for long sequences.
+
+</span>
+<span><em>arXiv preprint arXiv:2303.06349</em>, 2023b.
+
+</span>
+</li>
+<li>
+<span>Peng et al. [2023]</span>
+<span>
+B. Peng, E. Alcaide, Q. Anthony, A. Albalak, S. Arcadinho, H. Cao, X. Cheng,
+M. Chung, M. Grella, K. K. GV, et al.
+
+</span>
+<span>Rwkv: Reinventing RNNs for the transformer era.
+
+</span>
+<span><em>arXiv preprint arXiv:2305.13048</em>, 2023.
+
+</span>
+</li>
+<li>
+<span>Poli et al. [2023]</span>
+<span>
+M. Poli, S. Massaroli, E. Nguyen, D. Y. Fu, T. Dao, S. Baccus, Y. Bengio,
+S. Ermon, and C. Ré.
+
+</span>
+<span>Hyena hierarchy: Towards larger convolutional language models.
+
+</span>
+<span><em>arXiv preprint arXiv:2302.10866</em>, 2023.
+
+</span>
+</li>
+<li>
+<span>Rae et al. [2021]</span>
+<span>
+J. W. Rae, S. Borgeaud, T. Cai, K. Millican, J. Hoffmann, F. Song,
+J. Aslanides, S. Henderson, R. Ring, S. Young, et al.
+
+</span>
+<span>Scaling language models: Methods, analysis &amp; insights from training
+Gopher.
+
+</span>
+<span><em>arXiv preprint arXiv:2112.11446</em>, 2021.
+
+</span>
+</li>
+<li>
+<span>Rajbhandari et al. [2020]</span>
+<span>
+S. Rajbhandari, J. Rasley, O. Ruwase, and Y. He.
+
+</span>
+<span>Zero: Memory optimizations toward training trillion parameter models.
+
+</span>
+<span>In <em>SC20: International Conference for High Performance
+Computing, Networking, Storage and Analysis</em>, pages 1–16. IEEE, 2020.
+
+</span>
+</li>
+<li>
+<span>Shazeer [2019]</span>
+<span>
+N. Shazeer.
+
+</span>
+<span>Fast transformer decoding: One write-head is all you need.
+
+</span>
+<span><em>arXiv preprint arXiv:1911.02150</em>, 2019.
+
+</span>
+</li>
+<li>
+<span>Shazeer [2020]</span>
+<span>
+N. Shazeer.
+
+</span>
+<span>Glu variants improve transformer.
+
+</span>
+<span><em>arXiv preprint arXiv:2002.05202</em>, 2020.
+
+</span>
+</li>
+<li>
+<span>Shoeybi et al. [2019]</span>
+<span>
+M. Shoeybi, M. Patwary, R. Puri, P. LeGresley, J. Casper, and B. Catanzaro.
+
+</span>
+<span>Megatron-lm: Training multi-billion parameter language models using
+model parallelism.
+
+</span>
+<span><em>arXiv preprint arXiv:1909.08053</em>, 2019.
+
+</span>
+</li>
+<li>
+<span>Siegelmann and Sontag [1991]</span>
+<span>
+H. T. Siegelmann and E. D. Sontag.
+
+</span>
+<span>Turing computability with neural nets.
+
+</span>
+<span><em>Applied Mathematics Letters</em>, 4(6):77–80,
+1991.
+
+</span>
+<span>ISSN 0893-9659.
+
+</span>
+</li>
+<li>
+<span>Smith et al. [2022]</span>
+<span>
+J. T. Smith, A. Warrington, and S. W. Linderman.
+
+</span>
+<span>Simplified state space layers for sequence modeling.
+
+</span>
+<span><em>arXiv preprint arXiv:2208.04933</em>, 2022.
+
+</span>
+</li>
+<li>
+<span>Su et al. [2021]</span>
+<span>
+J. Su, Y. Lu, S. Pan, A. Murtadha, B. Wen, and Y. Liu.
+
+</span>
+<span>Roformer: Enhanced transformer with rotary position embedding.
+
+</span>
+<span><em>arXiv preprint arXiv:2104.09864</em>, 2021.
+
+</span>
+</li>
+<li>
+<span>Sun et al. [2023]</span>
+<span>
+Y. Sun, L. Dong, S. Huang, S. Ma, Y. Xia, J. Xue, J. Wang, and F. Wei.
+
+</span>
+<span>Retentive network: A successor to transformer for large language
+models.
+
+</span>
+<span><em>arXiv preprint arXiv:2307.08621</em>, 2023.
+
+</span>
+</li>
+<li>
+<span>Sutskever et al. [2014]</span>
+<span>
+I. Sutskever, O. Vinyals, and Q. V. Le.
+
+</span>
+<span>Sequence to sequence learning with neural networks.
+
+</span>
+<span>In <em>Advances in Neural Information Processing Systems</em>, pages
+3104–3112, 2014.
+
+</span>
+</li>
+<li>
+<span>Tay et al. [2020]</span>
+<span>
+Y. Tay, M. Dehghani, S. Abnar, Y. Shen, D. Bahri, P. Pham, J. Rao, L. Yang,
+S. Ruder, and D. Metzler.
+
+</span>
+<span>Long range arena: A benchmark for efficient transformers.
+
+</span>
+<span><em>arXiv preprint arXiv:2011.04006</em>, 2020.
+
+</span>
+</li>
+<li>
+<span>Touvron et al. [2023]</span>
+<span>
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M.-A. Lachaux, T. Lacroix,
+B. Rozière, N. Goyal, E. Hambro, F. Azhar, et al.
+
+</span>
+<span>LLama: Open and efficient foundation language models.
+
+</span>
+<span><em>arXiv preprint arXiv:2302.13971</em>, 2023.
+
+</span>
+</li>
+<li>
+<span>Vaswani et al. [2017]</span>
+<span>
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez,
+Ł. Kaiser, and I. Polosukhin.
+
+</span>
+<span>Attention is all you need.
+
+</span>
+<span>In <em>Advances in Neural Information Processing Systems</em>,
+volume 30, 2017.
+
+</span>
+</li>
+<li>
+<span>Wang et al. [2024]</span>
+<span>
+J. Wang, T. Gangavarapu, J. N. Yan, and A. M. Rush.
+
+</span>
+<span>Mambabyte: Token-free selective state space model.
+
+</span>
+<span><em>arXiv preprint arXiv:2401.13660</em>, 2024.
+
+</span>
+</li>
+<li>
+<span>Werbos [1990]</span>
+<span>
+P. J. Werbos.
+
+</span>
+<span>Backpropagation through time: what it does and how to do it.
+
+</span>
+<span><em>Proceedings of the IEEE</em>, 78(10):1550–1560, 1990.
+
+</span>
+</li>
+<li>
+<span>Wu et al. [2016]</span>
+<span>
+Y. Wu, M. Schuster, Z. Chen, Q. V. Le, M. Norouzi, W. Macherey, M. Krikun,
+Y. Cao, Q. Gao, K. Macherey, et al.
+
+</span>
+<span>Google’s neural machine translation system: Bridging the gap between
+human and machine translation.
+
+</span>
+<span><em>arXiv preprint arXiv:1609.08144</em>, 2016.
+
+</span>
+</li>
+<li>
+<span>Xiong et al. [2020]</span>
+<span>
+R. Xiong, Y. Yang, D. He, K. Zheng, S. Zheng, C. Xing, H. Zhang, Y. Lan,
+L. Wang, and T. Liu.
+
+</span>
+<span>On layer normalization in the transformer architecture.
+
+</span>
+<span>In <em>International Conference on Machine Learning</em>, pages
+10524–10533. PMLR, 2020.
+
+</span>
+</li>
+<li>
+<span>Zhai et al. [2021]</span>
+<span>
+S. Zhai, W. Talbott, N. Srivastava, C. Huang, H. Goh, R. Zhang, and
+J. Susskind.
+
+</span>
+<span>An attention free transformer.
+
+</span>
+<span><em>arXiv preprint arXiv:2105.14103</em>, 2021.
+
+</span>
+</li>
+<li>
+<span>Zhang and Sennrich [2019]</span>
+<span>
+B. Zhang and R. Sennrich.
+
+</span>
+<span>Root mean square layer normalization.
+
+</span>
+<span><em>Advances in Neural Information Processing Systems</em>, 32, 2019.
+
+</span>
+</li>
+<li>
+<span>Zhu et al. [2024]</span>
+<span>
+L. Zhu, B. Liao, Q. Zhang, X. Wang, W. Liu, and X. Wang.
+
+</span>
+<span>Vision mamba: Efficient visual representation learning with
+bidirectional state space model.
+
+</span>
+<span><em>arXiv preprint arXiv:2401.09417</em>, 2024.
+
+</span>
+</li>
+</ul>
+</section>
+<div></div>
+<section>
+<h2>
+<span>Appendix A </span>RG-LRU Recurrence Gate</h2>
+<div>
+<p>In Figure <a href="https://arxiv.org/html/2402.19427v1#A1.F7" title="Figure 7 ‣ Appendix A RG-LRU Recurrence Gate ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>7</span></a>, we demonstrate the behavior of different gating mechanisms applied on the recurrent weight <math alttext="a"><semantics><mi>a</mi><annotation>a</annotation></semantics></math>.</p>
+</div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span>Figure 7: </span>The behaviour of different gating mechanisms applied on the recurrent weight <math alttext="a"><semantics><mi>a</mi><annotation>a</annotation></semantics></math> (note that in the Mamba’s notations this is <math alttext="-A"><semantics><mrow><mo>−</mo><mi>A</mi></mrow><annotation>-A</annotation></semantics></math>).</figcaption>
+</figure>
+<section>
+<h5>Implementation</h5>
+<div>
+<p>We implement our recurrence gate, as defined in Section <a href="https://arxiv.org/html/2402.19427v1#S2.SS4" title="2.4 Real-Gated Linear Recurrent Unit (RG-LRU) ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2.4</span></a>, in a slightly different, but mathematically equivalent form, for numerical stability.
+In particular, we compute the logarithm of <math alttext="a_{t}"><semantics><msub><mi>a</mi><mi>t</mi></msub><annotation>a_{t}</annotation></semantics></math> and then we exponentiate it, instead of computing a sigmoid and then taking a power:</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle\log a_{t}=\log a^{cr_{t}}=\log\sigma(\Lambda)^{cr_{t}}=-c\operatorname{softplus}(\Lambda)\odot r_{t}."><semantics><mrow><mrow><mrow><mi>log</mi><mo>⁡</mo><msub><mi>a</mi><mi>t</mi></msub></mrow><mo>=</mo><mrow><mi>log</mi><mo>⁡</mo><msup><mi>a</mi><mrow><mi>c</mi><mo>​</mo><msub><mi>r</mi><mi>t</mi></msub></mrow></msup></mrow><mo>=</mo><mrow><mrow><mi>log</mi><mo>⁡</mo><mi>σ</mi></mrow><mo>​</mo><msup><mrow><mo>(</mo><mi>Λ</mi><mo>)</mo></mrow><mrow><mi>c</mi><mo>​</mo><msub><mi>r</mi><mi>t</mi></msub></mrow></msup></mrow><mo>=</mo><mrow><mo>−</mo><mrow><mrow><mi>c</mi><mo>​</mo><mrow><mi>softplus</mi><mo>⁡</mo><mrow><mo>(</mo><mi>Λ</mi><mo>)</mo></mrow></mrow></mrow><mo>⊙</mo><msub><mi>r</mi><mi>t</mi></msub></mrow></mrow></mrow><mo>.</mo></mrow><annotation>\displaystyle\log a_{t}=\log a^{cr_{t}}=\log\sigma(\Lambda)^{cr_{t}}=-c\operatorname{softplus}(\Lambda)\odot r_{t}.</annotation></semantics></math></td>
+<td></td>
+<td><span>(6)</span></td>
+</tr></tbody>
+</table>
+</div>
+</section>
+<section>
+<h5>Gate behaviour</h5>
+<div>
+<p>Our gate is quite different than other standard gates in the literature.
+In particular, most gating mechanisms, like the one used in Mamba and GRU, allow through the gate to interpolate fully between the hidden state and the new observation.
+Ours on the other hand is biased towards retaining information, and does not allow to fully discard the contribution of <math alttext="h_{t-1}"><semantics><msub><mi>h</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><annotation>h_{t-1}</annotation></semantics></math> (this depends, however, on the value of <math alttext="\Lambda"><semantics><mi>Λ</mi><annotation>\Lambda</annotation></semantics></math>).
+To demonstrate this, we analyze the relative weight of <math alttext="x_{t}"><semantics><msub><mi>x</mi><mi>t</mi></msub><annotation>x_{t}</annotation></semantics></math> compare to <math alttext="h_{t-1}"><semantics><msub><mi>h</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><annotation>h_{t-1}</annotation></semantics></math> in the output <math alttext="y_{t}"><semantics><msub><mi>y</mi><mi>t</mi></msub><annotation>y_{t}</annotation></semantics></math>.
+For a general recurrence we define this as:</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle h_{t}=\alpha(r_{t})h_{t-1}+\beta(r_{t})x_{t}."><semantics><mrow><mrow><msub><mi>h</mi><mi>t</mi></msub><mo>=</mo><mrow><mrow><mi>α</mi><mo>​</mo><mrow><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>)</mo></mrow><mo>​</mo><msub><mi>h</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub></mrow><mo>+</mo><mrow><mi>β</mi><mo>​</mo><mrow><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>)</mo></mrow><mo>​</mo><msub><mi>x</mi><mi>t</mi></msub></mrow></mrow></mrow><mo>.</mo></mrow><annotation>\displaystyle h_{t}=\alpha(r_{t})h_{t-1}+\beta(r_{t})x_{t}.</annotation></semantics></math></td>
+<td></td>
+<td><span>(7)</span></td>
+</tr></tbody>
+</table>
+<p>For our model we have <math alttext="\alpha(r_{t})=a_{t}=a^{cr_{t}}"><semantics><mrow><mrow><mi>α</mi><mo>​</mo><mrow><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>)</mo></mrow></mrow><mo>=</mo><msub><mi>a</mi><mi>t</mi></msub><mo>=</mo><msup><mi>a</mi><mrow><mi>c</mi><mo>​</mo><msub><mi>r</mi><mi>t</mi></msub></mrow></msup></mrow><annotation>\alpha(r_{t})=a_{t}=a^{cr_{t}}</annotation></semantics></math> and <math alttext="\beta(r_{t})=\sqrt{1-\alpha(r_{t})^{2}}"><semantics><mrow><mrow><mi>β</mi><mo>​</mo><mrow><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>)</mo></mrow></mrow><mo>=</mo><msqrt><mrow><mn>1</mn><mo>−</mo><mrow><mi>α</mi><mo>​</mo><msup><mrow><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>)</mo></mrow><mn>2</mn></msup></mrow></mrow></msqrt></mrow><annotation>\beta(r_{t})=\sqrt{1-\alpha(r_{t})^{2}}</annotation></semantics></math>.
+For a standard GRU style gating we have <math alttext="\alpha(r_{t})=1-r_{t}"><semantics><mrow><mrow><mi>α</mi><mo>​</mo><mrow><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>)</mo></mrow></mrow><mo>=</mo><mrow><mn>1</mn><mo>−</mo><msub><mi>r</mi><mi>t</mi></msub></mrow></mrow><annotation>\alpha(r_{t})=1-r_{t}</annotation></semantics></math> and <math alttext="\beta(r_{t})=r_{t}"><semantics><mrow><mrow><mi>β</mi><mo>​</mo><mrow><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>)</mo></mrow></mrow><mo>=</mo><msub><mi>r</mi><mi>t</mi></msub></mrow><annotation>\beta(r_{t})=r_{t}</annotation></semantics></math>.
+For Mamba, assuming in their notation <math alttext="B=1,C=1"><semantics><mrow><mrow><mi>B</mi><mo>=</mo><mn>1</mn></mrow><mo>,</mo><mrow><mi>C</mi><mo>=</mo><mn>1</mn></mrow></mrow><annotation>B=1,C=1</annotation></semantics></math>, then <math alttext="\alpha(r_{t})=(1-r_{t})^{-A}"><semantics><mrow><mrow><mi>α</mi><mo>​</mo><mrow><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>)</mo></mrow></mrow><mo>=</mo><msup><mrow><mo>(</mo><mrow><mn>1</mn><mo>−</mo><msub><mi>r</mi><mi>t</mi></msub></mrow><mo>)</mo></mrow><mrow><mo>−</mo><mi>A</mi></mrow></msup></mrow><annotation>\alpha(r_{t})=(1-r_{t})^{-A}</annotation></semantics></math> and <math alttext="\beta(r_{t})=(1-\alpha)/A"><semantics><mrow><mrow><mi>β</mi><mo>​</mo><mrow><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>)</mo></mrow></mrow><mo>=</mo><mrow><mrow><mo>(</mo><mrow><mn>1</mn><mo>−</mo><mi>α</mi></mrow><mo>)</mo></mrow><mo>/</mo><mi>A</mi></mrow></mrow><annotation>\beta(r_{t})=(1-\alpha)/A</annotation></semantics></math>.
+The behaviour of the different gating mechanisms is depicted in Figure <a href="https://arxiv.org/html/2402.19427v1#A1.F7" title="Figure 7 ‣ Appendix A RG-LRU Recurrence Gate ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>7</span></a>, where for clarity we have also included the update value of the LRU <cite>[Orvieto et al., <a href="https://arxiv.org/html/2402.19427v1#bib.bib43" title="">2023b</a>]</cite>, which has no gating.
+As can be seen, the Mamba gating is almost identical to the GRU for values of <math alttext="A"><semantics><mi>A</mi><annotation>A</annotation></semantics></math> close to <math alttext="1"><semantics><mn>1</mn><annotation>1</annotation></semantics></math>, with minor deviations at smaller values.
+On the other hand, our gating mechanism performs a very different non-linear interpolation between fully discarding the input <math alttext="x_{t}"><semantics><msub><mi>x</mi><mi>t</mi></msub><annotation>x_{t}</annotation></semantics></math> and the update of the LRU.</p>
+</div>
+</section>
+</section>
+<section>
+<h2>
+<span>Appendix B </span>Complex-Gated Linear Recurrent Unit (CG-LRU) </h2>
+<div>
+<p>In Section <a href="https://arxiv.org/html/2402.19427v1#S2.SS4" title="2.4 Real-Gated Linear Recurrent Unit (RG-LRU) ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2.4</span></a> we have defined our recurrent layer, however it can be further extended to use complex numbers.
+To achieve this we first parameterize a complex diagonal recurrence via <math alttext="\tilde{a}=\sigma(\Lambda)e^{i\theta}"><semantics><mrow><mover><mi>a</mi><mo>~</mo></mover><mo>=</mo><mrow><mi>σ</mi><mo>​</mo><mrow><mo>(</mo><mi>Λ</mi><mo>)</mo></mrow><mo>​</mo><msup><mi>e</mi><mrow><mi>i</mi><mo>​</mo><mi>θ</mi></mrow></msup></mrow></mrow><annotation>\tilde{a}=\sigma(\Lambda)e^{i\theta}</annotation></semantics></math>, where <math alttext="\theta"><semantics><mi>θ</mi><annotation>\theta</annotation></semantics></math> is a learnable parameter.
+In addition, we split the input <math alttext="x_{t}"><semantics><msub><mi>x</mi><mi>t</mi></msub><annotation>x_{t}</annotation></semantics></math> along its channel dimensions, and interpret its first half as the real part of a complex vector, and the second part as the imaginary part of the same complex vector:</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle x_{t}"><semantics><msub><mi>x</mi><mi>t</mi></msub><annotation>\displaystyle x_{t}</annotation></semantics></math></td>
+<td><math alttext="\displaystyle=\begin{bmatrix}x_{t}^{1}\\
+x_{t}^{2}\end{bmatrix}"><semantics><mrow><mi></mi><mo>=</mo><mrow><mo>[</mo><mtable><mtr><mtd><msubsup><mi>x</mi><mi>t</mi><mn>1</mn></msubsup></mtd></mtr><mtr><mtd><msubsup><mi>x</mi><mi>t</mi><mn>2</mn></msubsup></mtd></mtr></mtable><mo>]</mo></mrow></mrow><annotation>\displaystyle=\begin{bmatrix}x_{t}^{1}\\
+x_{t}^{2}\end{bmatrix}</annotation></semantics></math></td>
+<td></td>
+<td></td>
+<td><span>(8)</span></td>
+</tr></tbody>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle\tilde{x}_{t}"><semantics><msub><mover><mi>x</mi><mo>~</mo></mover><mi>t</mi></msub><annotation>\displaystyle\tilde{x}_{t}</annotation></semantics></math></td>
+<td><math alttext="\displaystyle=x_{t}^{1}+ix_{t}^{2}."><semantics><mrow><mrow><mi></mi><mo>=</mo><mrow><msubsup><mi>x</mi><mi>t</mi><mn>1</mn></msubsup><mo>+</mo><mrow><mi>i</mi><mo>​</mo><msubsup><mi>x</mi><mi>t</mi><mn>2</mn></msubsup></mrow></mrow></mrow><mo>.</mo></mrow><annotation>\displaystyle=x_{t}^{1}+ix_{t}^{2}.</annotation></semantics></math></td>
+<td></td>
+<td></td>
+<td><span>(9)</span></td>
+</tr></tbody>
+</table>
+</div>
+<div>
+<p>With this we rewrite the equations for the LRU (see eq. <a href="https://arxiv.org/html/2402.19427v1#S2.E4" title="Equation 4 ‣ 2.4 Real-Gated Linear Recurrent Unit (RG-LRU) ‣ 2 Model Architecture ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>4</span></a>) as:</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle r_{t}"><semantics><msub><mi>r</mi><mi>t</mi></msub><annotation>\displaystyle r_{t}</annotation></semantics></math></td>
+<td><math alttext="\displaystyle="><semantics><mo>=</mo><annotation>\displaystyle=</annotation></semantics></math></td>
+<td><math alttext="\displaystyle\sigma\left(W_{a}x_{t}+b_{a}\right),\quad{\color[rgb]{0.5,0.5,0.5}\text{ \emph{recurrence gate}}}"><semantics><mrow><mrow><mi>σ</mi><mo>​</mo><mrow><mo>(</mo><mrow><mrow><msub><mi>W</mi><mi>a</mi></msub><mo>​</mo><msub><mi>x</mi><mi>t</mi></msub></mrow><mo>+</mo><msub><mi>b</mi><mi>a</mi></msub></mrow><mo>)</mo></mrow></mrow><mo>,</mo><mrow><mtext> </mtext><mtext>recurrence gate</mtext></mrow></mrow><annotation>\displaystyle\sigma\left(W_{a}x_{t}+b_{a}\right),\quad{\color[rgb]{0.5,0.5,0.5}\text{ \emph{recurrence gate}}}</annotation></semantics></math></td>
+<td></td>
+<td><span>(10)</span></td>
+</tr></tbody>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle i_{t}"><semantics><msub><mi>i</mi><mi>t</mi></msub><annotation>\displaystyle i_{t}</annotation></semantics></math></td>
+<td><math alttext="\displaystyle="><semantics><mo>=</mo><annotation>\displaystyle=</annotation></semantics></math></td>
+<td><math alttext="\displaystyle\sigma(W_{x}x_{t}+b_{x}),\quad{\color[rgb]{0.5,0.5,0.5}\text{\emph{ input gate}}}"><semantics><mrow><mrow><mi>σ</mi><mo>​</mo><mrow><mo>(</mo><mrow><mrow><msub><mi>W</mi><mi>x</mi></msub><mo>​</mo><msub><mi>x</mi><mi>t</mi></msub></mrow><mo>+</mo><msub><mi>b</mi><mi>x</mi></msub></mrow><mo>)</mo></mrow></mrow><mo>,</mo><mtext><em> input gate</em></mtext></mrow><annotation>\displaystyle\sigma(W_{x}x_{t}+b_{x}),\quad{\color[rgb]{0.5,0.5,0.5}\text{\emph{ input gate}}}</annotation></semantics></math></td>
+<td></td>
+<td><span>(11)</span></td>
+</tr></tbody>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle\tilde{a}_{t}"><semantics><msub><mover><mi>a</mi><mo>~</mo></mover><mi>t</mi></msub><annotation>\displaystyle\tilde{a}_{t}</annotation></semantics></math></td>
+<td><math alttext="\displaystyle="><semantics><mo>=</mo><annotation>\displaystyle=</annotation></semantics></math></td>
+<td><math alttext="\displaystyle\tilde{a}^{cr_{t}},"><semantics><mrow><msup><mover><mi>a</mi><mo>~</mo></mover><mrow><mi>c</mi><mo>​</mo><msub><mi>r</mi><mi>t</mi></msub></mrow></msup><mo>,</mo></mrow><annotation>\displaystyle\tilde{a}^{cr_{t}},</annotation></semantics></math></td>
+<td></td>
+<td><span>(12)</span></td>
+</tr></tbody>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle\tilde{h}_{t}"><semantics><msub><mover><mi>h</mi><mo>~</mo></mover><mi>t</mi></msub><annotation>\displaystyle\tilde{h}_{t}</annotation></semantics></math></td>
+<td><math alttext="\displaystyle="><semantics><mo>=</mo><annotation>\displaystyle=</annotation></semantics></math></td>
+<td><math alttext="\displaystyle\tilde{a}_{t}\odot\tilde{h}_{t-1}+\sqrt{1-|\tilde{a}_{t}|^{2}}\odot(i_{t}\odot\tilde{x}_{t})."><semantics><mrow><mrow><mrow><msub><mover><mi>a</mi><mo>~</mo></mover><mi>t</mi></msub><mo>⊙</mo><msub><mover><mi>h</mi><mo>~</mo></mover><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub></mrow><mo>+</mo><mrow><msqrt><mrow><mn>1</mn><mo>−</mo><msup><mrow><mo>|</mo><msub><mover><mi>a</mi><mo>~</mo></mover><mi>t</mi></msub><mo>|</mo></mrow><mn>2</mn></msup></mrow></msqrt><mo>⊙</mo><mrow><mo>(</mo><mrow><msub><mi>i</mi><mi>t</mi></msub><mo>⊙</mo><msub><mover><mi>x</mi><mo>~</mo></mover><mi>t</mi></msub></mrow><mo>)</mo></mrow></mrow></mrow><mo>.</mo></mrow><annotation>\displaystyle\tilde{a}_{t}\odot\tilde{h}_{t-1}+\sqrt{1-|\tilde{a}_{t}|^{2}}\odot(i_{t}\odot\tilde{x}_{t}).</annotation></semantics></math></td>
+<td></td>
+<td><span>(13)</span></td>
+</tr></tbody>
+</table>
+<p>We mark all complex variables with <math alttext="\tilde{\cdot}"><semantics><mover><mo>⋅</mo><mo>~</mo></mover><annotation>\tilde{\cdot}</annotation></semantics></math> for clarity.
+Note that the number of dimensions of <math alttext="r_{t},i_{t},\tilde{a}_{t}"><semantics><mrow><msub><mi>r</mi><mi>t</mi></msub><mo>,</mo><msub><mi>i</mi><mi>t</mi></msub><mo>,</mo><msub><mover><mi>a</mi><mo>~</mo></mover><mi>t</mi></msub></mrow><annotation>r_{t},i_{t},\tilde{a}_{t}</annotation></semantics></math> and <math alttext="\tilde{h}_{t}"><semantics><msub><mover><mi>h</mi><mo>~</mo></mover><mi>t</mi></msub><annotation>\tilde{h}_{t}</annotation></semantics></math> are half of those of the real input <math alttext="x_{t}"><semantics><msub><mi>x</mi><mi>t</mi></msub><annotation>x_{t}</annotation></semantics></math>.
+Finally, to compute the output we stack the real and imaginary part of <math alttext="h_{t}"><semantics><msub><mi>h</mi><mi>t</mi></msub><annotation>h_{t}</annotation></semantics></math> into a single vector <math alttext="y_{t}"><semantics><msub><mi>y</mi><mi>t</mi></msub><annotation>y_{t}</annotation></semantics></math>:</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\displaystyle y_{t}"><semantics><msub><mi>y</mi><mi>t</mi></msub><annotation>\displaystyle y_{t}</annotation></semantics></math></td>
+<td><math alttext="\displaystyle=\begin{bmatrix}\text{Real}(\tilde{h}_{t})\\
+\text{Imaginary}(\tilde{h}_{t})\end{bmatrix}"><semantics><mrow><mi></mi><mo>=</mo><mrow><mo>[</mo><mtable><mtr><mtd><mrow><mtext>Real</mtext><mo>​</mo><mrow><mo>(</mo><msub><mover><mi>h</mi><mo>~</mo></mover><mi>t</mi></msub><mo>)</mo></mrow></mrow></mtd></mtr><mtr><mtd><mrow><mtext>Imaginary</mtext><mo>​</mo><mrow><mo>(</mo><msub><mover><mi>h</mi><mo>~</mo></mover><mi>t</mi></msub><mo>)</mo></mrow></mrow></mtd></mtr></mtable><mo>]</mo></mrow></mrow><annotation>\displaystyle=\begin{bmatrix}\text{Real}(\tilde{h}_{t})\\
+\text{Imaginary}(\tilde{h}_{t})\end{bmatrix}</annotation></semantics></math></td>
+<td></td>
+<td></td>
+<td><span>(14)</span></td>
+</tr></tbody>
+</table>
+</div>
+</section>
+<section>
+<h2>
+<span>Appendix C </span>Model Scale Hyper-Parameters</h2>
+<div>
+<p>In Table <a href="https://arxiv.org/html/2402.19427v1#A3.T2" title="Table 2 ‣ Appendix C Model Scale Hyper-Parameters ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>2</span></a>, we present the hyper-parameters of the models at different scales. These hyperparameters are shared for all the model families that we explored in this paper.</p>
+</div>
+<figure>
+<figcaption><span>Table 2: </span>Key model hyper-parameters considered for different model sizes. These hyperparameters are shared across different architectures we tested.</figcaption>
+<table>
+<thead>
+<tr>
+<th><span>Model</span></th>
+<th><span>Model Width</span></th>
+<th><span>RNN Width</span></th>
+<th><span>Depth</span></th>
+<th><span>MLP Expansion</span></th>
+<th><span>Attention</span></th>
+<th><span>Training Tokens</span></th>
+</tr>
+<tr>
+<th><span>Size</span></th>
+<th><math alttext="\bm{(D)}"><semantics><mrow><mo>(</mo><mi>𝑫</mi><mo>)</mo></mrow><annotation>\bm{(D)}</annotation></semantics></math></th>
+<th><math alttext="\bm{(D_{RNN})}"><semantics><mrow><mo>(</mo><msub><mi>𝑫</mi><mrow><mi>𝑹</mi><mo>​</mo><mi>𝑵</mi><mo>​</mo><mi>𝑵</mi></mrow></msub><mo>)</mo></mrow><annotation>\bm{(D_{RNN})}</annotation></semantics></math></th>
+<th>
+<span>(</span><math alttext="\bm{N}"><semantics><mi>𝑵</mi><annotation>\bm{N}</annotation></semantics></math><span>)</span>
+</th>
+<th><span>Factor (<math alttext="\bm{M}"><semantics><mi>M</mi><annotation>\bm{M}</annotation></semantics></math>)</span></th>
+<th><span>Heads</span></th>
+<th><span>(Optimal Scaling)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span>100M</span></td>
+<td><span>768</span></td>
+<td><span>1024</span></td>
+<td><span>12</span></td>
+<td><span>3</span></td>
+<td><span>6</span></td>
+<td><span>1.9B</span></td>
+</tr>
+<tr>
+<td><span>200M</span></td>
+<td><span>1024</span></td>
+<td><span>1536</span></td>
+<td><span>12</span></td>
+<td><span>3</span></td>
+<td><span>8</span></td>
+<td><span>3.9B</span></td>
+</tr>
+<tr>
+<td><span>400M</span></td>
+<td><span>1536</span></td>
+<td><span>2048</span></td>
+<td><span>12</span></td>
+<td><span>3</span></td>
+<td><span>12</span></td>
+<td><span>7.8B</span></td>
+</tr>
+<tr>
+<td><span>1.3B</span></td>
+<td><span>2048</span></td>
+<td><span>2560</span></td>
+<td><span>24</span></td>
+<td><span>3</span></td>
+<td><span>16</span></td>
+<td><span>25B</span></td>
+</tr>
+<tr>
+<td><span>3B</span></td>
+<td><span>3072</span></td>
+<td><span>4096</span></td>
+<td><span>24</span></td>
+<td><span>3</span></td>
+<td><span>24</span></td>
+<td><span>60B</span></td>
+</tr>
+<tr>
+<td><span>7B</span></td>
+<td><span>4096</span></td>
+<td><span>5632</span></td>
+<td><span>32</span></td>
+<td><span>3</span></td>
+<td><span>32</span></td>
+<td><span>132.5B</span></td>
+</tr>
+<tr>
+<td><span>14B</span></td>
+<td><span>5120</span></td>
+<td><span>8192</span></td>
+<td><span>40</span></td>
+<td><span>3</span></td>
+<td><span>40</span></td>
+<td><span>300B</span></td>
+</tr>
+</tbody>
+</table>
+</figure>
+</section>
+<section>
+<h2>
+<span>Appendix D </span>Efficient Linear Recurrences on Device</h2>
+<figure>
+<table>
+<tbody>
+<tr>
+<th><span>Specification</span></th>
+<td><span>TPU-v3 Pod</span></td>
+</tr>
+<tr>
+<th>HBM capacity</th>
+<td>32 GB</td>
+</tr>
+<tr>
+<th><span>HBM bandwidth</span></th>
+<td><span>900 GB/s</span></td>
+</tr>
+<tr>
+<th>Peak MXU compute</th>
+<td>123 TFLOPs/s (bfloat16)</td>
+</tr>
+<tr>
+<th><span>Peak MXU FLOPs-to-byte-ratio</span></th>
+<td><span>136</span></td>
+</tr>
+<tr>
+<th>Peak VPU compute</th>
+<td>3.8 TFLOPs/s</td>
+</tr>
+<tr>
+<th><span>Peak VPU FLOPs-to-byte-ratio</span></th>
+<td><span>4.2</span></td>
+</tr>
+</tbody>
+</table>
+<figcaption><span>Table 3: </span>Hardware specifications for a TPU-v3 pod.</figcaption>
+</figure>
+<figure>
+<div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(a)</span> </span><span>Scan runtimes</span></figcaption>
+</figure>
+</div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(b)</span> </span><span>
+Hawk runtimes</span></figcaption>
+</figure>
+</div>
+</div>
+<figcaption><span>Figure 8: </span>a) Runtimes of different implementations of the scan operation on a TPU-v3 at different sequence lengths. The batch size of the input is fixed at 8 and the dimension of each token is 1024.
+b) Relative runtimes of the Hawk model when using different implementations of the scan operation, in reference to the one with the native Jax scan implementation.</figcaption>
+</figure>
+<div>
+<p>The initial step in computational optimization lies in identifying the primary performance bottleneck on the target hardware.
+For most accelerators, the key limiting factors are computational throughput (FLOPs/s) and memory bandwidth between the high-bandwidth memory (HBM) and the fast vector memory (VMEM).
+While factors like HBM capacity and host-device communication are relevant, techniques such as ZeRO sharding and pipelined data transfer offer practical mitigations.
+Modern accelerator designs often prioritize a high FLOPs-to-byte ratio to accommodate workloads where computations significantly outnumber memory transfers.
+We show the key specification of the TPU-v3 pod (two chips per pod) in Table <a href="https://arxiv.org/html/2402.19427v1#A4.T3" title="Table 3 ‣ Appendix D Efficient Linear Recurrences on Device ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>3</span></a>, which we use for all our experiments.</p>
+</div>
+<section>
+<h3>
+<span>D.1 </span>Matrix multiplication computation</h3>
+<div>
+<p>A typical matrix multiplication of a <math alttext="D\times D"><semantics><mrow><mi>D</mi><mo>×</mo><mi>D</mi></mrow><annotation>D\times D</annotation></semantics></math> matrix with a <math alttext="D\times N"><semantics><mrow><mi>D</mi><mo>×</mo><mi>N</mi></mrow><annotation>D\times N</annotation></semantics></math> matrix has <math alttext="2ND^{2}"><semantics><mrow><mn>2</mn><mo>​</mo><mi>N</mi><mo>​</mo><msup><mi>D</mi><mn>2</mn></msup></mrow><annotation>2ND^{2}</annotation></semantics></math> FLOPs and <math alttext="2(D^{2}+2ND)"><semantics><mrow><mn>2</mn><mo>​</mo><mrow><mo>(</mo><mrow><msup><mi>D</mi><mn>2</mn></msup><mo>+</mo><mrow><mn>2</mn><mo>​</mo><mi>N</mi><mo>​</mo><mi>D</mi></mrow></mrow><mo>)</mo></mrow></mrow><annotation>2(D^{2}+2ND)</annotation></semantics></math> bytes to transfer (both read and write) which translates to <math alttext="\frac{ND}{D+N}"><semantics><mfrac><mrow><mi>N</mi><mo>​</mo><mi>D</mi></mrow><mrow><mi>D</mi><mo>+</mo><mi>N</mi></mrow></mfrac><annotation>\frac{ND}{D+N}</annotation></semantics></math> FLOPs/byte ratio.
+When <math alttext="D&gt;&gt;N"><semantics><mrow><mi>D</mi><mo>&gt;&gt;</mo><mi>N</mi></mrow><annotation>D&gt;&gt;N</annotation></semantics></math> and running on a TPU-v3 this implies that the dimension <math alttext="N"><semantics><mi>N</mi><annotation>N</annotation></semantics></math> must be at least 136 to saturate the device, in which case the operation is “compute bound”, or otherwise most of the time will be spent on waiting for memory transfers, in which case the operation is “memory bound”.</p>
+</div>
+</section>
+<section>
+<h3>
+<span>D.2 </span>Scan runtimes</h3>
+<div>
+<p>In Figure <a href="https://arxiv.org/html/2402.19427v1#A4.F8.sf1" title="Figure 8(a) ‣ Figure 8 ‣ Appendix D Efficient Linear Recurrences on Device ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>8(a)</span></a> we demonstrate that on a TPU-v3 our Pallas kernel achieves nearly x3 speed up compared to the naive Jax implementation.
+In addition, the associative scan is significantly slower, even if fully run in bfloat16 precision.
+Figure <a href="https://arxiv.org/html/2402.19427v1#A4.F8.sf2" title="Figure 8(b) ‣ Figure 8 ‣ Appendix D Efficient Linear Recurrences on Device ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>8(b)</span></a> demonstrates that these gains also translate to significant improvements of the overall training time per step of the full Hawk model even at the 7b scale.
+For completeness we have also added the runtime of the associative scan, which can be up to 50% slower.</p>
+</div>
+</section>
+</section>
+<section>
+<h2>
+<span>Appendix E </span>The Local Attention Window Size of Griffin</h2>
+<figure><img alt="Refer to caption"/>
+<figcaption><span>Figure 9: </span>Performance of 400M parameter Griffin and MQA Transformer models using different local attention window sizes and different training sequence lengths. The window sizes of the local attention layers are shown above each bar in the plot. We notice that a global attention MQA Transformer is much better than local attention variants of the MQA Transformer (where the window size is smaller than the training sequence length). Furthermore, we see that using a fixed local attention window size of 1024 (denoted ‘1K’ in the plot) for the Griffin model outperforms all global attention and local attention MQA Transformer baselines across all training sequence lengths.</figcaption>
+</figure>
+<div>
+<p>Griffin uses both recurrent blocks as well as local attention layers in its temporal mixing blocks. For all experiments previously shown using a training sequence length of 2048, we use a local attention window size of 1024. We now investigate how the performance of different window sizes for the local attention layer varies with the training sequence length.</p>
+</div>
+<div>
+<p>We consider 400M parameter models trained on sequence lengths of 2048, 4096 and 8192 tokens, where we keep the total number of training tokens fixed. For each sequence length, we train Griffin models using different local attention window sizes. As baselines, we train MQA Transformers using global attention layers, as well MQA Transformers using local attention layers with different window sizes. The results are shown in Figure <a href="https://arxiv.org/html/2402.19427v1#A5.F9" title="Figure 9 ‣ Appendix E The Local Attention Window Size of Griffin ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>9</span></a>, where the window sizes used are shown on top of each bar (MQA Transformer bars with window size equal to the training sequence length are the global attention MQA Transformer baseline).</p>
+</div>
+<div>
+<p>From Figure <a href="https://arxiv.org/html/2402.19427v1#A5.F9" title="Figure 9 ‣ Appendix E The Local Attention Window Size of Griffin ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>9</span></a>, we see that remarkably, even when using a fixed window size of 1024 for the local attention layers in Griffin, it outperforms the global attention MQA Transformer baseline across all sequence lengths tested. However, it is worth noting that the performance gap between Griffin with local attention window 1024 and the global attention MQA Transformer reduces as the sequence length grows. Therefore, if the sequence length grows further, it is likely important to slowly also grow the local attention window size. In practice, the hardware used will also heavily determine the optimal local attention window size in terms of training and inference speed. Finally, we note that MQA Transformers purely using local attention (window sizes less than the training sequence length) perform significantly worse than both global attention MQA Transformers, as well as Griffin.</p>
+</div>
+</section>
+<section>
+<h2>
+<span>Appendix F </span>Inference Speeds</h2>
+<section>
+<h3>
+<span>F.1 </span>Estimating memory-boundedness</h3>
+<div>
+<p>The inference speed of language models at decode time is bounded by memory loading. As described already in <a href="https://arxiv.org/html/2402.19427v1#S4.SS2" title="4.2 Efficient linear recurrences on device ‣ 4 Training Recurrent Models Efficiently on Device ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>4.2</span></a> the linear RNN is memory bound. In the following we will show this is true for the other components (which are linear layers and self-attention) in our recurrent models and Transformer models.</p>
+</div>
+</section>
+<section>
+<h3>
+<span>F.2 </span>Estimating the memory boundedness of linear layers</h3>
+<div>
+<p>As shown in <a href="https://arxiv.org/html/2402.19427v1#A4.SS1" title="D.1 Matrix multiplication computation ‣ Appendix D Efficient Linear Recurrences on Device ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>D.1</span></a> the outer dimension (usually consisting of batch <math alttext="B"><semantics><mi>B</mi><annotation>B</annotation></semantics></math> and sequence length <math alttext="T"><semantics><mi>T</mi><annotation>T</annotation></semantics></math> dimensions) must be at least 136 in order to be compute bound. At decode time <math alttext="T=1"><semantics><mrow><mi>T</mi><mo>=</mo><mn>1</mn></mrow><annotation>T=1</annotation></semantics></math> and if we assume <math alttext="B\lesssim 128"><semantics><mrow><mi>B</mi><mo>≲</mo><mn>128</mn></mrow><annotation>B\lesssim 128</annotation></semantics></math> then any linear layers will be memory bound at decode time.</p>
+</div>
+</section>
+<section>
+<h3>
+<span>F.3 </span>Estimating the memory boundedness of self-attention</h3>
+<div>
+<p>In the following, we calculate the ratio of memory accesses to arithmetic operations for the attention computation for the <math alttext="L"><semantics><mi>L</mi><annotation>L</annotation></semantics></math>-th decode step, to show it is also memory-bound.</p>
+</div>
+<div>
+<p>To simplify the following analysis, we assume that we start from an empty prompt (or equivalently assume that the prefill contains 0 tokens).</p>
+</div>
+<div>
+<p>When sampling auto-regressively from MHA or MQA, standard practice is to save the key and value vectors in a Key-Value (KV) cache. For <math alttext="L"><semantics><mi>L</mi><annotation>L</annotation></semantics></math> tokens already sampled, the KV cache would therefore be of size <math alttext="2\times L\times H_{k}\times d_{head}"><semantics><mrow><mn>2</mn><mo>×</mo><mi>L</mi><mo>×</mo><msub><mi>H</mi><mi>k</mi></msub><mo>×</mo><msub><mi>d</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub></mrow><annotation>2\times L\times H_{k}\times d_{head}</annotation></semantics></math> for each sequence in the batch, where <math alttext="H_{k}"><semantics><msub><mi>H</mi><mi>k</mi></msub><annotation>H_{k}</annotation></semantics></math> denotes the number of heads used for the keys and values, and <math alttext="d_{head}"><semantics><msub><mi>d</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub><annotation>d_{head}</annotation></semantics></math> denotes the dimension of the key and value vectors in each head.</p>
+</div>
+<div>
+<p>For sampling the <math alttext="L"><semantics><mi>L</mi><annotation>L</annotation></semantics></math>-th token, once we calculate the query, key and value vectors corresponding to the <math alttext="L"><semantics><mi>L</mi><annotation>L</annotation></semantics></math>-th token. The attention weights and the output of the attention layer are then computed using the <math alttext="L"><semantics><mi>L</mi><annotation>L</annotation></semantics></math>-th key and value vectors in the KV cache. This requires <math alttext="O(LD)"><semantics><mrow><mi>O</mi><mo>​</mo><mrow><mo>(</mo><mrow><mi>L</mi><mo>​</mo><mi>D</mi></mrow><mo>)</mo></mrow></mrow><annotation>O(LD)</annotation></semantics></math> operations overall and it requires loading the <math alttext="O(L\times H_{k}\times d_{head})"><semantics><mrow><mi>O</mi><mo>​</mo><mrow><mo>(</mo><mrow><mi>L</mi><mo>×</mo><msub><mi>H</mi><mi>k</mi></msub><mo>×</mo><msub><mi>d</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub></mrow><mo>)</mo></mrow></mrow><annotation>O(L\times H_{k}\times d_{head})</annotation></semantics></math> sized KV cache from HBM, for each sequence in the minibatch. The size of the KV cache, as well as the number of FLOPs, scales linearly with the batch size <math alttext="B"><semantics><mi>B</mi><annotation>B</annotation></semantics></math>.</p>
+</div>
+<div>
+<p>For MHA, the number of heads for the key and values <math alttext="H_{k}"><semantics><msub><mi>H</mi><mi>k</mi></msub><annotation>H_{k}</annotation></semantics></math> is typically equal to the number of heads used for the queries <math alttext="H"><semantics><mi>H</mi><annotation>H</annotation></semantics></math>. For MQA, a single head is used for keys and values, i.e., <math alttext="H_{k}=1"><semantics><mrow><msub><mi>H</mi><mi>k</mi></msub><mo>=</mo><mn>1</mn></mrow><annotation>H_{k}=1</annotation></semantics></math>. Therefore for MQA, the size of the KV cache is a factor of <math alttext="H_{k}"><semantics><msub><mi>H</mi><mi>k</mi></msub><annotation>H_{k}</annotation></semantics></math> smaller (i.e., of size <math alttext="2\times L\times d_{head}"><semantics><mrow><mn>2</mn><mo>×</mo><mi>L</mi><mo>×</mo><msub><mi>d</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub></mrow><annotation>2\times L\times d_{head}</annotation></semantics></math>).</p>
+</div>
+<div>
+<div>
+<div><a href="data:text/plain;base64,ZGVmIGF0dGVudGlvbl9zYW1wbGluZyhxLCBrLCB2KToKICAiIiIgQXV0by1yZWdyZXNzaXZlIHNhbXBsaW5nIHZpYSBhdHRlbnRpb24uCiAgRm9yIE1IQSwgaF9rID0gaC4gRm9yIE1RQSwgaF9rID0gMS4KICBBcmdzOgogICAgIHEgOiBUaGUgcSB2ZWN0b3IgZm9yIGN1cnJlbnQgdG9rZW4gb2Ygc2hhcGUgW2IsIGgsIGtdCiAgICAgayA6IFRoZSBrZXlzIG9mIHRoZSBjdXJyZW50ICsgcHJldmlvdXMgdG9rZW5zIFtiLCBMLCBoX2ssIGtdCiAgICAgdiA6IHRoZSB2YWx1ZXMgb2YgdGhlIGN1cnJlbnQgKyBwcmV2aW91cyB0b2tlbnMgW2IsIEwsIGhfaywgdl0KICAiIiIKICBsb2dpdHMgPSBlaW5zdW0oImJoayxiTGstPmJoTCIsIHEsIGspICAjIE8oYmhMaykKICB3ZWlnaHRzID0gc29mdG1heChsb2dpdHMpCiAgb3V0cHV0ID0gZWluc3VtKCJiaEwsYkx2LT5iaHYiLCB3ZWlnaHRzLCB2KSAgIyBPKGJoTHYpCiAgcmV0dXJuIG91dHB1dA==">⬇</a></div>
+<div>
+<span>def</span><span> </span><span>attention_sampling</span><span>(</span><span>q</span><span>,</span><span> </span><span>k</span><span>,</span><span> </span><span>v</span><span>):</span>
+</div>
+<div>
+<span> </span><span>""</span><span>"<span> </span>Auto-regressive<span> </span>sampling<span> </span>via<span> </span>attention.</span>
+</div>
+<div>
+<span> </span><span>For</span><span> </span><span>MHA,</span><span> </span><span>h_k</span><span> </span><span>=</span><span> </span><span>h.</span><span> </span><span>For</span><span> </span><span>MQA,</span><span> </span><span>h_k</span><span> </span><span>=</span><span> </span><span>1.</span>
+</div>
+<div>
+<span> </span><span>Args:</span>
+</div>
+<div>
+<span> </span><span>q</span><span> </span><span>:</span><span> </span><span>The</span><span> </span><span>q</span><span> </span><span>vector</span><span> </span><span>for</span><span> </span><span>current</span><span> </span><span>token</span><span> </span><span>of</span><span> </span><span>shape</span><span> </span><span>[b,</span><span> </span><span>h,</span><span> </span><span>k]</span>
+</div>
+<div>
+<span> </span><span>k</span><span> </span><span>:</span><span> </span><span>The</span><span> </span><span>keys</span><span> </span><span>of</span><span> </span><span>the</span><span> </span><span>current</span><span> </span><span>+</span><span> </span><span>previous</span><span> </span><span>tokens</span><span> </span><span>[b,</span><span> </span><span>L,</span><span> </span><span>h_k,</span><span> </span><span>k]</span>
+</div>
+<div>
+<span> </span><span>v</span><span> </span><span>:</span><span> </span><span>the</span><span> </span><span>values</span><span> </span><span>of</span><span> </span><span>the</span><span> </span><span>current</span><span> </span><span>+</span><span> </span><span>previous</span><span> </span><span>tokens</span><span> </span><span>[b,</span><span> </span><span>L,</span><span> </span><span>h_k,</span><span> </span><span>v]</span>
+</div>
+<div>
+<span> </span><span>"</span><span></span><span>""</span>
+</div>
+<div>
+<span> </span><span>logits</span><span> </span><span>=</span><span> </span><span>einsum</span><span>(</span><span>"bhk,bLk-&gt;bhL"</span><span>,</span><span> </span><span>q</span><span>,</span><span> </span><span>k</span><span>)</span><span> </span><span>#<span> </span>O(bhLk)</span>
+</div>
+<div>
+<span> </span><span>weights</span><span> </span><span>=</span><span> </span><span>softmax</span><span>(</span><span>logits</span><span>)</span>
+</div>
+<div>
+<span> </span><span>output</span><span> </span><span>=</span><span> </span><span>einsum</span><span>(</span><span>"bhL,bLv-&gt;bhv"</span><span>,</span><span> </span><span>weights</span><span>,</span><span> </span><span>v</span><span>)</span><span> </span><span>#<span> </span>O(bhLv)</span>
+</div>
+<div>
+<span> </span><span>return</span><span> </span><span>output</span>
+</div>
+</div>
+</div>
+<div>
+<p>For a batch size of <math alttext="B"><semantics><mi>B</mi><annotation>B</annotation></semantics></math>, the memory access to FLOPs ratio for the attention computation goes as <math alttext="O(\frac{B\times L\times H_{k}\times d_{head}}{B\times L\times D})"><semantics><mrow><mi>O</mi><mo>​</mo><mrow><mo>(</mo><mfrac><mrow><mi>B</mi><mo>×</mo><mi>L</mi><mo>×</mo><msub><mi>H</mi><mi>k</mi></msub><mo>×</mo><msub><mi>d</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub></mrow><mrow><mi>B</mi><mo>×</mo><mi>L</mi><mo>×</mo><mi>D</mi></mrow></mfrac><mo>)</mo></mrow></mrow><annotation>O(\frac{B\times L\times H_{k}\times d_{head}}{B\times L\times D})</annotation></semantics></math>. For typical Transformer architectures, <math alttext="D=H\times d_{head}"><semantics><mrow><mi>D</mi><mo>=</mo><mrow><mi>H</mi><mo>×</mo><msub><mi>d</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub></mrow></mrow><annotation>D=H\times d_{head}</annotation></semantics></math> and further <math alttext="H_{k}=H"><semantics><mrow><msub><mi>H</mi><mi>k</mi></msub><mo>=</mo><mi>H</mi></mrow><annotation>H_{k}=H</annotation></semantics></math> for MHA and <math alttext="H_{k}=1"><semantics><mrow><msub><mi>H</mi><mi>k</mi></msub><mo>=</mo><mn>1</mn></mrow><annotation>H_{k}=1</annotation></semantics></math> for MQA. Therefore the memory access to flops ratio is <math alttext="O(1)"><semantics><mrow><mi>O</mi><mo>​</mo><mrow><mo>(</mo><mn>1</mn><mo>)</mo></mrow></mrow><annotation>O(1)</annotation></semantics></math> for MHA and <math alttext="O(1/H)"><semantics><mrow><mi>O</mi><mo>​</mo><mrow><mo>(</mo><mrow><mn>1</mn><mo>/</mo><mi>H</mi></mrow><mo>)</mo></mrow></mrow><annotation>O(1/H)</annotation></semantics></math> for MQA. As explained in <a href="https://arxiv.org/html/2402.19427v1#A4.T3" title="Table 3 ‣ Appendix D Efficient Linear Recurrences on Device ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>3</span></a>, in order to be compute bound on TPU-v3 a FLOPs-to-byte ratio of 136 is required, and therefore both MHA and MQA would typically be memory bound. Nevertheless, MQA significantly speeds up Transformer inference (when compared to MHA), since it lowers the memory boundedness by a factor of <math alttext="H"><semantics><mi>H</mi><annotation>H</annotation></semantics></math>.</p>
+</div>
+</section>
+<section>
+<h3>
+<span>F.4 </span>Cache sizes</h3>
+<div>
+<p>In the following we do an analysis of the relative sizes of caches used in our recurrent and Transformers. All caches sizes scale linearly with batch size and in the following we assume <math alttext="B=1"><semantics><mrow><mi>B</mi><mo>=</mo><mn>1</mn></mrow><annotation>B=1</annotation></semantics></math>.</p>
+</div>
+<section>
+<h4>
+<span>F.4.1 </span>The size of the KV cache</h4>
+<div>
+<p>For attention, the KV cache has size <math alttext="2NTh_{k}d_{head}"><semantics><mrow><mn>2</mn><mo>​</mo><mi>N</mi><mo>​</mo><mi>T</mi><mo>​</mo><msub><mi>h</mi><mi>k</mi></msub><mo>​</mo><msub><mi>d</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub></mrow><annotation>2NTh_{k}d_{head}</annotation></semantics></math>, where <math alttext="N"><semantics><mi>N</mi><annotation>N</annotation></semantics></math> denotes the number of attention layers (the depth), <math alttext="T"><semantics><mi>T</mi><annotation>T</annotation></semantics></math> denotes the length of the sequence, <math alttext="h_{k}"><semantics><msub><mi>h</mi><mi>k</mi></msub><annotation>h_{k}</annotation></semantics></math> denotes the number of KV heads and <math alttext="d_{head}"><semantics><msub><mi>d</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub><annotation>d_{head}</annotation></semantics></math> denotes the head dimension. Throughout this work, <math alttext="d_{head}=128"><semantics><mrow><msub><mi>d</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub><mo>=</mo><mn>128</mn></mrow><annotation>d_{head}=128</annotation></semantics></math>. For MHA, <math alttext="h_{k}d_{head}=D"><semantics><mrow><mrow><msub><mi>h</mi><mi>k</mi></msub><mo>​</mo><msub><mi>d</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub></mrow><mo>=</mo><mi>D</mi></mrow><annotation>h_{k}d_{head}=D</annotation></semantics></math>, while for MQA, <math alttext="h_{k}=1"><semantics><mrow><msub><mi>h</mi><mi>k</mi></msub><mo>=</mo><mn>1</mn></mrow><annotation>h_{k}=1</annotation></semantics></math>. (We therefore expect MQA to be faster when decoding long sequences than MHA, since the size of the KV cache is significantly smaller and less memory needs to be moved.)</p>
+</div>
+<div>
+<p>For either MHA or MQA the size of the KV cache can exceed the number of model parameters when the sequence length <math alttext="T"><semantics><mi>T</mi><annotation>T</annotation></semantics></math> is large. We therefore expect to observe a transition from a ‘parameter bound’ regime when the sequence length is short, during which the decoding speed is dominated by the time taken to load the model parameters on device, to a ‘cache bound’ regime for large sequences, where the decoding speed is dominated by the time taken to load the KV cache.</p>
+</div>
+</section>
+<section>
+<h4>
+<span>F.4.2 </span>The size of the recurrent state</h4>
+<div>
+<p>The recurrent state of a single RG-LRU layer has size <math alttext="D_{RNN}"><semantics><msub><mi>D</mi><mrow><mi>R</mi><mo>​</mo><mi>N</mi><mo>​</mo><mi>N</mi></mrow></msub><annotation>D_{RNN}</annotation></semantics></math>, and the total state size for the entire Hawk model is <math alttext="ND_{RNN}\approx 4BND/3"><semantics><mrow><mrow><mi>N</mi><mo>​</mo><msub><mi>D</mi><mrow><mi>R</mi><mo>​</mo><mi>N</mi><mo>​</mo><mi>N</mi></mrow></msub></mrow><mo>≈</mo><mrow><mrow><mn>4</mn><mo>​</mo><mi>B</mi><mo>​</mo><mi>N</mi><mo>​</mo><mi>D</mi></mrow><mo>/</mo><mn>3</mn></mrow></mrow><annotation>ND_{RNN}\approx 4BND/3</annotation></semantics></math>. Unlike the KV cache, this state does not grow with sequence length and is very small in comparison to parameter size. We therefore expect the decoding speed of RG-LRU to be dominated by the time taken to load the model parameters on device at all sequence lengths.</p>
+</div>
+<div>
+<p>A similar consideration applies to the size of the 1D convolution state size. For a temporal filter width of size 4, the state has size <math alttext="(4-1)D_{RNN}=3D_{RNN}=4D"><semantics><mrow><mrow><mrow><mo>(</mo><mrow><mn>4</mn><mo>−</mo><mn>1</mn></mrow><mo>)</mo></mrow><mo>​</mo><msub><mi>D</mi><mrow><mi>R</mi><mo>​</mo><mi>N</mi><mo>​</mo><mi>N</mi></mrow></msub></mrow><mo>=</mo><mrow><mn>3</mn><mo>​</mo><msub><mi>D</mi><mrow><mi>R</mi><mo>​</mo><mi>N</mi><mo>​</mo><mi>N</mi></mrow></msub></mrow><mo>=</mo><mrow><mn>4</mn><mo>​</mo><mi>D</mi></mrow></mrow><annotation>(4-1)D_{RNN}=3D_{RNN}=4D</annotation></semantics></math> for each recurrent block which is also substantially smaller than parameter sizes.</p>
+</div>
+</section>
+<section>
+<h4>
+<span>F.4.3 </span>The local attention cache</h4>
+<div>
+<p>A single local MQA layer has cache size upper bounded by <math alttext="2T_{WS}d_{head}"><semantics><mrow><mn>2</mn><mo>​</mo><msub><mi>T</mi><mrow><mi>W</mi><mo>​</mo><mi>S</mi></mrow></msub><mo>​</mo><msub><mi>d</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub></mrow><annotation>2T_{WS}d_{head}</annotation></semantics></math>, where <math alttext="T_{WS}"><semantics><msub><mi>T</mi><mrow><mi>W</mi><mo>​</mo><mi>S</mi></mrow></msub><annotation>T_{WS}</annotation></semantics></math> denotes the local attention window size. So long as <math alttext="T_{WS}\lesssim D^{2}/(Bd_{head})"><semantics><mrow><msub><mi>T</mi><mrow><mi>W</mi><mo>​</mo><mi>S</mi></mrow></msub><mo>≲</mo><mrow><msup><mi>D</mi><mn>2</mn></msup><mo>/</mo><mrow><mo>(</mo><mrow><mi>B</mi><mo>​</mo><msub><mi>d</mi><mrow><mi>h</mi><mo>​</mo><mi>e</mi><mo>​</mo><mi>a</mi><mo>​</mo><mi>d</mi></mrow></msub></mrow><mo>)</mo></mrow></mrow></mrow><annotation>T_{WS}\lesssim D^{2}/(Bd_{head})</annotation></semantics></math>, the size of the local attention cache is also small relative to the parameter count. We therefore expect the decoding speed of Griffin to be similar to the decoding speed of the Hawk model.</p>
+</div>
+</section>
+</section>
+</section>
+<section>
+<h2>
+<span>Appendix G </span>Improving Next Token Prediction with Longer Contexts: Additional Results</h2>
+<div>
+<p>Figure <a href="https://arxiv.org/html/2402.19427v1#A7.F10" title="Figure 10 ‣ Appendix G Improving Next Token Prediction with Longer Contexts: Additional Results ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>10</span></a> shows an additional result demonstrating next token prediction performance at different context lengths on a held out dataset of arXiv articles. We find that the results on this dataset are qualitatively similar to the results shown in Figure <a href="https://arxiv.org/html/2402.19427v1#S6.F5" title="Figure 5 ‣ 6.1 Improving next token prediction with longer contexts ‣ 6 Long Context Modeling ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>5</span></a>.</p>
+</div>
+<figure>
+<div>
+<div><img alt="Refer to caption"/></div>
+<div><img alt="Refer to caption"/></div>
+</div>
+<figcaption><span>Figure 10: </span>
+The evaluation performance of 1B parameter models across a range of sequence lengths on held-out evaluation sets of ArXiv articles.
+On the left, we compare the performance of different models trained with sequence length 2048, evaluated with a sequence length of up to 32,768.
+On the right, we compare Griffin and Hawk when trained respectively on 2048 (2k) and 8192 (8k) sequence lengths.
+Results are qualitatively similar to the evaluation on Books presented in Figure <a href="https://arxiv.org/html/2402.19427v1#S6.F5" title="Figure 5 ‣ 6.1 Improving next token prediction with longer contexts ‣ 6 Long Context Modeling ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>5</span></a>.
+</figcaption>
+</figure>
+</section>
+<section>
+<h2>
+<span>Appendix H </span>Additional Details of the Copy and Retrieval Tasks</h2>
+<div>
+<p>Figure <a href="https://arxiv.org/html/2402.19427v1#A8.F11" title="Figure 11 ‣ Appendix H Additional Details of the Copy and Retrieval Tasks ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>11</span></a> is an illustration of the Selective Copying and Induction Heads tasks.</p>
+</div>
+<figure>
+<div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(a)</span> </span><span>Selective Copying Task</span></figcaption>
+</figure>
+</div>
+<div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span><span>(b)</span> </span><span>Induction Heads Task Task</span></figcaption>
+</figure>
+</div>
+</div>
+<figcaption><span>Figure 11: </span>
+An illustration of the Selective Copying (left) and the Induction Heads tasks (right).
+</figcaption>
+</figure>
+<div>
+<p>In the Selective Copying task, the model needs to learn to copy data tokens (coloured tokens in Figure <a href="https://arxiv.org/html/2402.19427v1#A8.F11" title="Figure 11 ‣ Appendix H Additional Details of the Copy and Retrieval Tasks ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>11</span></a>) from a sequence while ignoring noise tokens (white tokens in Figure <a href="https://arxiv.org/html/2402.19427v1#A8.F11" title="Figure 11 ‣ Appendix H Additional Details of the Copy and Retrieval Tasks ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>11</span></a>). Crossed out tokens in the output in Figure <a href="https://arxiv.org/html/2402.19427v1#S6.F6" title="Figure 6 ‣ 6.2 Copy and retrieval capabilities ‣ 6 Long Context Modeling ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>6</span></a> denote tokens that are masked out in the loss.</p>
+</div>
+<div>
+<p>In the Induction Heads task, the model needs to learn to recall the token immediately following a special token (black token in Figure <a href="https://arxiv.org/html/2402.19427v1#A8.F11" title="Figure 11 ‣ Appendix H Additional Details of the Copy and Retrieval Tasks ‣ Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models"><span>11</span></a>). As before, crossed out tokens in the output denote tokens that are masked out in the loss.</p>
+</div>
+</section>
+</article>
+</div>
+</div>
+</body>
+</html>
