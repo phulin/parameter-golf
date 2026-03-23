@@ -663,14 +663,38 @@ class RGLRU(nn.Module):
 
 
 def _rglru_scan(a: Tensor, b: Tensor) -> Tensor:
-    """Sequential linear recurrence: h_t = a_t * h_{t-1} + b_t, h_0 = 0."""
-    B, T, D = b.shape
-    h = b.new_zeros(B, D)
-    outs = []
-    for t in range(T):
-        h = a[:, t] * h + b[:, t]
-        outs.append(h)
-    return torch.stack(outs, dim=1)
+    """
+    Parallel prefix scan for h_t = a_t * h_{t-1} + b_t, h_0 = 0.
+
+    Uses the Hillis-Steele algorithm on the associative monoid of affine maps:
+        (a2, b2) ∘ (a1, b1) = (a2*a1, a2*b1 + b2)
+    Runs in O(log T) = ~10 Python iterations (not T=1024), so torch.compile
+    sees a small graph instead of 1024 unrolled steps.
+    Numerically stable: only multiplies by a ∈ (0,1), never divides by it.
+    """
+    B, T, D = a.shape
+    # Pad length to the next power of 2 so the doubling loop terminates cleanly.
+    T2 = 1 << (T - 1).bit_length() if T > 1 else 1
+    if T2 > T:
+        pad = T2 - T
+        a = torch.cat([a, a.new_ones(B, pad, D)], dim=1)
+        b = torch.cat([b, b.new_zeros(B, pad, D)], dim=1)
+
+    # Hillis-Steele inclusive left-prefix scan.
+    # Invariant: after round k, b[t] = h for the prefix [0 .. t] of length 2^k.
+    # Composition rule: to prepend (l_a, l_b) before (r_a, r_b):
+    #   new_a = r_a * l_a,  new_b = r_a * l_b + r_b
+    step = 1
+    while step < T2:
+        n = T2 - step
+        l_a, l_b = a[:, :n], b[:, :n]   # left neighbour 'step' positions back
+        r_a, r_b = a[:, step:], b[:, step:]
+        new_a = torch.cat([a[:, :step], r_a * l_a], dim=1)
+        new_b = torch.cat([b[:, :step], r_a * l_b + r_b], dim=1)
+        a, b = new_a, new_b
+        step *= 2
+
+    return b[:, :T]
 
 
 @torch._dynamo.disable
@@ -1319,8 +1343,7 @@ def main() -> None:
         if isinstance(module, Rotary):
             module.inv_freq.data = module.inv_freq.data.float()
     restore_low_dim_params_to_fp32(base_model)
-    # fullgraph=False because _rglru_scan uses a Python for-loop over time
-    compiled_model = torch.compile(base_model, dynamic=False, fullgraph=False)
+    compiled_model = torch.compile(base_model, dynamic=False, fullgraph=True)
     model: nn.Module = (
         DDP(compiled_model, device_ids=[local_rank], broadcast_buffers=False)
         if distributed
