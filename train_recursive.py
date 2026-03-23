@@ -106,6 +106,7 @@ class Hyperparameters:
     # Recursive loop hyperparameters.
     max_loops = int(os.environ.get("MAX_LOOPS", 4))
     eval_loops = int(os.environ.get("EVAL_LOOPS", 0))  # 0 = use max_loops
+    truncated_bptt_k = int(os.environ.get("TRUNCATED_BPTT_K", 8))  # detach state every k iters
     ttt_eval_loops = int(
         os.environ.get("TTT_EVAL_LOOPS", 1)
     )  # separate: TTT has many more fwd passes per doc
@@ -735,7 +736,9 @@ class Block(nn.Module):
     ):
         super().__init__()
         self.attn_norm = RMSNorm()
+        self.attn_post_norm = RMSNorm()  # sandwich: wraps attn residual
         self.mlp_norm = RMSNorm()
+        self.mlp_post_norm = RMSNorm()   # sandwich: wraps mlp residual
         self.attn = CausalSelfAttention(
             dim, num_heads, num_kv_heads, rope_base, qk_gain_init
         )
@@ -755,10 +758,10 @@ class Block(nn.Module):
         qd = q_delta_fn(n) if q_delta_fn is not None else None
         vd = v_delta_fn(n) if v_delta_fn is not None else None
         attn_out = self.attn(n, qd, vd)
-        x = x + self.attn_scale.to(dtype=x.dtype)[None, None, :] * attn_out
-        x = x + self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(
+        x = self.attn_post_norm(x + self.attn_scale.to(dtype=x.dtype)[None, None, :] * attn_out)
+        x = self.mlp_post_norm(x + self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(
             self.mlp_norm(x)
-        )
+        ))
         return x
 
 
@@ -817,6 +820,8 @@ class GPT(nn.Module):
         self.inject_linear = CastedLinear(2 * model_dim, model_dim, bias=False)
         # Learnable scale for the initial noise state s_0 ~ N(0, scale^2 * I).
         self.state_init_scale = nn.Parameter(torch.tensor(0.02))
+        # Normalizes the recurrent state after each full pass through R (paper's n_c).
+        self.recurrent_out_norm = RMSNorm()
         self.final_norm = RMSNorm()
         self.lm_head = (
             None if tie_embeddings else CastedLinear(model_dim, vocab_size, bias=False)
@@ -843,7 +848,12 @@ class GPT(nn.Module):
                 nn.init.zeros_(module.weight)
 
     def forward(
-        self, input_ids: Tensor, target_ids: Tensor, lora=None, num_loops: int = 1
+        self,
+        input_ids: Tensor,
+        target_ids: Tensor,
+        lora=None,
+        num_loops: int = 1,
+        truncated_bptt_k: int = 8,
     ) -> Tensor:
         raw = self.tok_emb(input_ids)
         raw = F.rms_norm(raw, (raw.size(-1),))
@@ -855,21 +865,17 @@ class GPT(nn.Module):
         scale = self.state_init_scale.to(dtype=e.dtype)
         s = scale * torch.randn_like(e)
 
-        loss = (
-            torch.zeros(e.shape[:-1], dtype=e.dtype, device=e.device)
-            if lora
-            else torch.tensor(0.0, dtype=e.dtype, device=e.device)
-        )
-
         # Recurrent loop: each iteration maps (s, e) → new state s via shared blocks.
-        # e is injected at the start of each step via the 2h→h inject_linear, and also
-        # serves as the residual-mix anchor (x0) inside every block.
+        # e is injected at every step via inject_linear and as the per-layer resid anchor.
         for loop in range(num_loops):
-            # Input injection: concat state and prelude embedding, project to model_dim.
+            # Truncated BPTT: detach state every k iterations so backprop only flows
+            # through the last k steps (saves memory, matches paper's k=8 default).
+            if truncated_bptt_k > 0 and loop > 0 and loop % truncated_bptt_k == 0:
+                s = s.detach()
+            # Input injection: concat state + prelude embedding, project 2h → h.
             x = self.inject_linear(torch.cat([s, e], dim=-1))
             x = x + self._depth_emb(loop, num_loops, x.size(-1), x.device, x.dtype)
             skips: list[Tensor] = []
-            # e is the per-layer skip anchor — keeps input signal alive through each block.
             for i in range(self.num_encoder_layers):
                 qd = lora.q_loras[i] if lora else None
                 vd = lora.v_loras[i] if lora else None
@@ -886,32 +892,31 @@ class GPT(nn.Module):
                 qd = lora.q_loras[bi] if lora else None
                 vd = lora.v_loras[bi] if lora else None
                 x = self.blocks[bi](x, e, qd, vd)
-            s = x  # update state (without coda, so s stays in recurrent latent space)
+            # Normalize state with n_c before next iteration (or coda).
+            s = self.recurrent_out_norm(x)
 
-            # Coda C: project final state to logits for this loop's auxiliary loss.
-            out = self.post_adapter(s, e)
-            weight = 2 * (loop + 1) / (num_loops * (num_loops + 1))
-            norm = self.final_norm(out)
-            if self.tie_embeddings:
-                logits = F.linear(norm, self.tok_emb.weight)
-            else:
-                logits = self.lm_head(norm)
-            logits = logits + (lora.lm_head_lora(norm) if lora else 0)
-            logits = self.logit_softcap * torch.tanh(logits / self.logit_softcap)
-            if lora:
-                bsz, sl, V = logits.shape
-                loss += weight * F.cross_entropy(
-                    logits.float().reshape(-1, V),
-                    target_ids.reshape(-1),
-                    reduction="none",
-                ).reshape(bsz, sl)
-            else:
-                loss += weight * F.cross_entropy(
-                    logits.float().reshape(-1, logits.size(-1)),
-                    target_ids.reshape(-1),
-                    reduction="mean",
-                )
-
+        # Coda C: takes final state only (no e injection); produces logits once.
+        out = self.post_adapter(s, s)
+        norm = self.final_norm(out)
+        if self.tie_embeddings:
+            logits = F.linear(norm, self.tok_emb.weight)
+        else:
+            logits = self.lm_head(norm)
+        logits = logits + (lora.lm_head_lora(norm) if lora else 0)
+        logits = self.logit_softcap * torch.tanh(logits / self.logit_softcap)
+        if lora:
+            bsz, sl, V = logits.shape
+            loss = F.cross_entropy(
+                logits.float().reshape(-1, V),
+                target_ids.reshape(-1),
+                reduction="none",
+            ).reshape(bsz, sl)
+        else:
+            loss = F.cross_entropy(
+                logits.float().reshape(-1, logits.size(-1)),
+                target_ids.reshape(-1),
+                reduction="mean",
+            )
         return loss
 
 
