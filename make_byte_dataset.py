@@ -65,13 +65,20 @@ def main() -> None:
     print(f"Converting {len(src_files)} shards: {src_dir} -> {dst_dir}")
 
     sp = spm.SentencePieceProcessor(model_file=tokenizer_path)
-    total_docs = total_bytes = 0
+    total_docs = total_bytes = skipped = 0
     for src in src_files:
-        ndocs, nbytes = convert_shard(src, dst_dir / src.name, sp)
+        dst = dst_dir / src.name
+        if dst.exists():
+            skipped += 1
+            print(f"  {src.name}: skipped (already exists)")
+            continue
+        ndocs, nbytes = convert_shard(src, dst, sp)
         total_docs += ndocs
         total_bytes += nbytes
         print(f"  {src.name}: {ndocs:,} docs, {nbytes:,} bytes")
 
+    if skipped:
+        print(f"\nSkipped {skipped:,} existing shards")
     print(f"\nDone: {total_docs:,} docs, {total_bytes / 1e9:.2f} GB total")
 
 
