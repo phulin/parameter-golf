@@ -26,6 +26,7 @@ mac = [
 ]
 
 [tool.uv.sources]
+numpy = { index = "pypi" }
 torch = { index = "pytorch" }
 
 [[tool.uv.index]]
