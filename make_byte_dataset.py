@@ -13,7 +13,6 @@ Defaults:
     tokenizer = ./data/tokenizers/fineweb_1024_bpe.model
 """
 
-import multiprocessing as mp
 import sys
 from pathlib import Path
 
@@ -24,14 +23,6 @@ BOS_ID = 1
 DEFAULT_SRC = "./data/datasets/fineweb10B_sp1024"
 DEFAULT_DST = "./data/datasets/fineweb10B_bytes"
 DEFAULT_TOKENIZER = "./data/tokenizers/fineweb_1024_bpe.model"
-
-_sp: spm.SentencePieceProcessor
-
-
-def _init_worker(tokenizer_path: str) -> None:
-    global _sp
-    _sp = spm.SentencePieceProcessor(model_file=tokenizer_path)
-
 
 def convert_shard(
     src: Path, dst: Path, sp: spm.SentencePieceProcessor
@@ -58,14 +49,6 @@ def convert_shard(
     out_bytes = b"".join(b"\x01" + t.encode("utf-8") for t in texts)
     dst.write_bytes(out_bytes)
     return len(bos_positions), len(out_bytes)
-
-
-def _convert_worker(args: tuple[Path, Path]) -> tuple[str, int, int]:
-    src, dst = args
-    ndocs, nbytes = convert_shard(src, dst, _sp)
-    return src.name, ndocs, nbytes
-
-
 def main() -> None:
     src_dir = Path(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SRC)
     dst_dir = Path(sys.argv[2] if len(sys.argv) > 2 else DEFAULT_DST)
@@ -78,13 +61,13 @@ def main() -> None:
         raise FileNotFoundError(f"No fineweb_*.bin files found in {src_dir}")
     print(f"Converting {len(src_files)} shards: {src_dir} -> {dst_dir}")
 
-    work = [(src, dst_dir / src.name) for src in src_files]
-    with mp.Pool(initializer=_init_worker, initargs=(tokenizer_path,)) as pool:
-        total_docs = total_bytes = 0
-        for name, ndocs, nbytes in pool.imap(_convert_worker, work):
-            total_docs += ndocs
-            total_bytes += nbytes
-            print(f"  {name}: {ndocs:,} docs, {nbytes:,} bytes")
+    sp = spm.SentencePieceProcessor(model_file=tokenizer_path)
+    total_docs = total_bytes = 0
+    for src in src_files:
+        ndocs, nbytes = convert_shard(src, dst_dir / src.name, sp)
+        total_docs += ndocs
+        total_bytes += nbytes
+        print(f"  {src.name}: {ndocs:,} docs, {nbytes:,} bytes")
 
     print(f"\nDone: {total_docs:,} docs, {total_bytes / 1e9:.2f} GB total")
 
