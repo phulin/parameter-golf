@@ -27,6 +27,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from torch import Tensor, nn
+from torch.nn.attention.flex_attention import BlockMask, create_block_mask, flex_attention
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from wandb_utils import (
@@ -618,6 +619,18 @@ def _rglru_scan(a: Tensor, b: Tensor) -> Tensor:
     return torch.stack(outs, dim=1)
 
 
+@torch._dynamo.disable
+def _build_local_block_mask(
+    window_size: int, num_heads: int, seqlen: int, device: torch.device
+) -> BlockMask:
+    def local_mask(b, h, q_idx, kv_idx):
+        return (kv_idx <= q_idx) & (kv_idx > q_idx - window_size)
+
+    return create_block_mask(
+        local_mask, 1, num_heads, seqlen, seqlen, device=device, BLOCK_SIZE=128
+    )
+
+
 class RecurrentMixingBlock(nn.Module):
     """
     Griffin recurrent temporal-mixing block (Figure 2c).
@@ -682,6 +695,20 @@ class LocalSlidingAttention(nn.Module):
         self.proj._zero_init = True
         self.q_gain = nn.Parameter(torch.full((num_heads,), qk_gain_init, dtype=torch.float32))
         self.rotary = Rotary(self.head_dim, base=rope_base)
+        self._block_mask_cache: dict[tuple[str, int, int], BlockMask] = {}
+
+    def _get_block_mask(self, seqlen: int, device: torch.device) -> BlockMask:
+        dev_key = (
+            f"{device.type}:{device.index}" if device.index is not None else device.type
+        )
+        key = (dev_key, seqlen, self.window_size)
+        block_mask = self._block_mask_cache.get(key)
+        if block_mask is None:
+            block_mask = _build_local_block_mask(
+                self.window_size, self.num_heads, seqlen, device
+            )
+            self._block_mask_cache[key] = block_mask
+        return block_mask
 
     def forward(self, x: Tensor, q_delta=None, v_delta=None) -> Tensor:
         bsz, seqlen, dim = x.shape
@@ -701,24 +728,27 @@ class LocalSlidingAttention(nn.Module):
             repeat = self.num_heads // self.num_kv_heads
             k = k.repeat_interleave(repeat, dim=1)
             v = v.repeat_interleave(repeat, dim=1)
-
-        # Build sliding window causal mask: position j is visible from i iff i-window_size < j <= i
-        if self.window_size < seqlen:
-            # attn_mask[i,j] = True means MASKED (ignored)
-            rows = torch.arange(seqlen, device=x.device)
-            cols = torch.arange(seqlen, device=x.device)
-            # causal: j <= i; window: j > i - window_size
-            mask = (cols[None, :] > rows[:, None]) | (cols[None, :] <= rows[:, None] - self.window_size)
-            mask = mask[None, None, :, :]  # (1, 1, T, T)
-            attn_mask = torch.zeros(1, 1, seqlen, seqlen, device=x.device, dtype=q.dtype).masked_fill(mask, float("-inf"))
+        if x.is_cuda:
+            block_mask = self._get_block_mask(seqlen, x.device)
+            y = flex_attention(
+                q, k, v, block_mask=block_mask, kernel_options={"BACKEND": "FLASH"}
+            )
         else:
-            attn_mask = None
-
-        y = F.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=attn_mask,
-            is_causal=(attn_mask is None),
-        )
+            # CPU fallback for simple smoke tests.
+            if self.window_size < seqlen:
+                rows = torch.arange(seqlen, device=x.device)
+                cols = torch.arange(seqlen, device=x.device)
+                mask = (cols[None, :] > rows[:, None]) | (
+                    cols[None, :] <= rows[:, None] - self.window_size
+                )
+                attn_mask = torch.zeros(
+                    1, 1, seqlen, seqlen, device=x.device, dtype=q.dtype
+                ).masked_fill(mask, float("-inf"))
+            else:
+                attn_mask = None
+            y = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, is_causal=(attn_mask is None)
+            )
         y = y.transpose(1, 2).contiguous().reshape(bsz, seqlen, dim)
         return self.proj(y)
 
