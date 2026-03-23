@@ -85,7 +85,6 @@ class Hyperparameters:
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
 
-
     # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
     head_lr = float(os.environ.get("HEAD_LR", 0.008))
@@ -703,7 +702,6 @@ class CausalSelfAttention(nn.Module):
         return self.proj(y)
 
 
-
 class MLP(nn.Module):
     # relu^2 MLP from the original modded-nanogpt setup
     def __init__(self, dim: int, mlp_mult: int):
@@ -742,7 +740,7 @@ class Block(nn.Module):
                 expand_v=1,
                 mode="chunk",
                 use_gate=True,
-                use_short_conv=False,
+                use_short_conv=True,
             )
         else:
             self.attn = CausalSelfAttention(
@@ -918,8 +916,12 @@ class BatchedTTTLoRA(nn.Module):
         self.v_loras = nn.ModuleList()
         for block in model.blocks:
             # FLA GatedDeltaNet blocks don't expose c_q/c_v; LoRA is only applied to softmax-attn blocks.
-            q_out = block.attn.c_q.weight.shape[0] if hasattr(block.attn, 'c_q') else dim
-            v_out = block.attn.c_v.weight.shape[0] if hasattr(block.attn, 'c_v') else dim
+            q_out = (
+                block.attn.c_q.weight.shape[0] if hasattr(block.attn, "c_q") else dim
+            )
+            v_out = (
+                block.attn.c_v.weight.shape[0] if hasattr(block.attn, "c_v") else dim
+            )
             self.q_loras.append(BatchedLinearLoRA(bsz, dim, q_out, rank))
             self.v_loras.append(BatchedLinearLoRA(bsz, dim, v_out, rank))
 
@@ -1425,7 +1427,9 @@ def main() -> None:
             progress = min(elapsed_ms / max(max_wallclock_ms, 1.0), 1.0)
         else:
             progress = min(step / max(args.iterations, 1), 1.0)
-        return args.lr_min_scale + (1.0 - args.lr_min_scale) * 0.5 * (1.0 + math.cos(math.pi * progress))
+        return args.lr_min_scale + (1.0 - args.lr_min_scale) * 0.5 * (
+            1.0 + math.cos(math.pi * progress)
+        )
 
     # Warmup primes the compiled forward/backward/optimizer paths, then we restore the
     # initial weights/optimizer state so measured training starts from the true init.
