@@ -33,7 +33,9 @@ def _init_worker(tokenizer_path: str) -> None:
     _sp = spm.SentencePieceProcessor(model_file=tokenizer_path)
 
 
-def convert_shard(src: Path, dst: Path, sp: spm.SentencePieceProcessor) -> tuple[int, int]:
+def convert_shard(
+    src: Path, dst: Path, sp: spm.SentencePieceProcessor
+) -> tuple[int, int]:
     """Decode a tokenized shard to a raw byte shard. Returns (num_docs, num_bytes)."""
     header_bytes = 256 * np.dtype("<i4").itemsize
     header = np.fromfile(src, dtype="<i4", count=256)
@@ -50,7 +52,7 @@ def convert_shard(src: Path, dst: Path, sp: spm.SentencePieceProcessor) -> tuple
 
     # Split on BOS boundaries and batch-decode the whole shard at once.
     doc_arrays = np.split(tokens, bos_positions[1:])
-    doc_token_lists = [arr[1:].tolist() for arr in doc_arrays]
+    doc_token_lists = [arr[1:] for arr in doc_arrays]
     texts: list[str] = sp.decode(doc_token_lists)
 
     out_bytes = b"".join(b"\x01" + t.encode("utf-8") for t in texts)
