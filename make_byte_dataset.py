@@ -13,7 +13,7 @@ Defaults:
     tokenizer = ./data/tokenizers/fineweb_1024_bpe.model
 """
 
-import glob
+import multiprocessing as mp
 import sys
 from pathlib import Path
 
@@ -24,6 +24,13 @@ BOS_ID = 1
 DEFAULT_SRC = "./data/datasets/fineweb10B_sp1024"
 DEFAULT_DST = "./data/datasets/fineweb10B_bytes"
 DEFAULT_TOKENIZER = "./data/tokenizers/fineweb_1024_bpe.model"
+
+_sp: spm.SentencePieceProcessor
+
+
+def _init_worker(tokenizer_path: str) -> None:
+    global _sp
+    _sp = spm.SentencePieceProcessor(model_file=tokenizer_path)
 
 
 def convert_shard(src: Path, dst: Path, sp: spm.SentencePieceProcessor) -> tuple[int, int]:
@@ -41,16 +48,20 @@ def convert_shard(src: Path, dst: Path, sp: spm.SentencePieceProcessor) -> tuple
         dst.write_bytes(b"")
         return 0, 0
 
-    out_chunks: list[bytes] = []
-    for i, bos_pos in enumerate(bos_positions):
-        end = int(bos_positions[i + 1]) if i + 1 < len(bos_positions) else len(tokens)
-        doc_tokens = tokens[int(bos_pos) + 1 : end].tolist()
-        text = sp.decode(doc_tokens)
-        out_chunks.append(b"\x01" + text.encode("utf-8"))
+    # Split on BOS boundaries and batch-decode the whole shard at once.
+    doc_arrays = np.split(tokens, bos_positions[1:])
+    doc_token_lists = [arr[1:].tolist() for arr in doc_arrays]
+    texts: list[str] = sp.decode(doc_token_lists)
 
-    out_bytes = b"".join(out_chunks)
+    out_bytes = b"".join(b"\x01" + t.encode("utf-8") for t in texts)
     dst.write_bytes(out_bytes)
     return len(bos_positions), len(out_bytes)
+
+
+def _convert_worker(args: tuple[Path, Path]) -> tuple[str, int, int]:
+    src, dst = args
+    ndocs, nbytes = convert_shard(src, dst, _sp)
+    return src.name, ndocs, nbytes
 
 
 def main() -> None:
@@ -59,21 +70,19 @@ def main() -> None:
     tokenizer_path = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_TOKENIZER
 
     dst_dir.mkdir(parents=True, exist_ok=True)
-    sp = spm.SentencePieceProcessor(model_file=tokenizer_path)
 
     src_files = sorted(src_dir.glob("fineweb_*.bin"))
     if not src_files:
         raise FileNotFoundError(f"No fineweb_*.bin files found in {src_dir}")
     print(f"Converting {len(src_files)} shards: {src_dir} -> {dst_dir}")
 
-    total_docs = 0
-    total_bytes = 0
-    for src in src_files:
-        dst = dst_dir / src.name
-        ndocs, nbytes = convert_shard(src, dst, sp)
-        total_docs += ndocs
-        total_bytes += nbytes
-        print(f"  {src.name}: {ndocs:,} docs, {nbytes:,} bytes")
+    work = [(src, dst_dir / src.name) for src in src_files]
+    with mp.Pool(initializer=_init_worker, initargs=(tokenizer_path,)) as pool:
+        total_docs = total_bytes = 0
+        for name, ndocs, nbytes in pool.imap(_convert_worker, work):
+            total_docs += ndocs
+            total_bytes += nbytes
+            print(f"  {name}: {ndocs:,} docs, {nbytes:,} bytes")
 
     print(f"\nDone: {total_docs:,} docs, {total_bytes / 1e9:.2f} GB total")
 
