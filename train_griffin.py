@@ -27,11 +27,6 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from torch import Tensor, nn
-from torch.nn.attention.flex_attention import (
-    BlockMask,
-    create_block_mask,
-    flex_attention,
-)
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from wandb_utils import (
@@ -721,14 +716,16 @@ def _rglru_scan(a: Tensor, b: Tensor) -> Tensor:
     return b[:, :T]
 
 
-def _build_local_block_mask(
-    window_size: int, num_heads: int, seqlen: int, device: torch.device
-) -> BlockMask:
-    def local_mask(b, h, q_idx, kv_idx):
-        return (kv_idx <= q_idx) & (kv_idx > q_idx - window_size)
-
-    return create_block_mask(
-        local_mask, 1, num_heads, seqlen, seqlen, device=device, BLOCK_SIZE=128
+def _build_local_attn_mask(
+    window_size: int, seqlen: int, device: torch.device
+) -> Tensor:
+    rows = torch.arange(seqlen, device=device)
+    cols = torch.arange(seqlen, device=device)
+    blocked = (cols[None, :] > rows[:, None]) | (
+        cols[None, :] <= rows[:, None] - window_size
+    )
+    return torch.zeros(1, 1, seqlen, seqlen, device=device, dtype=torch.float32).masked_fill(
+        blocked, float("-inf")
     )
 
 
@@ -803,13 +800,13 @@ class LocalSlidingAttention(nn.Module):
         self.q_gain = nn.Parameter(
             torch.full((num_heads,), qk_gain_init, dtype=torch.float32)
         )
+        if self.head_dim % 2 != 0:
+            raise ValueError("head_dim must be even for RoPE")
         self.rotary = Rotary(self.head_dim, base=rope_base)
-        self._block_mask: BlockMask | None = None  # set by warmup_block_mask() before compile
+        self._attn_mask: Tensor | None = None  # set by warmup_attn_mask() before compile
 
-    def warmup_block_mask(self, seqlen: int, device: torch.device) -> None:
-        self._block_mask = _build_local_block_mask(
-            self.window_size, self.num_heads, seqlen, device
-        )
+    def warmup_attn_mask(self, seqlen: int, device: torch.device) -> None:
+        self._attn_mask = _build_local_attn_mask(self.window_size, seqlen, device)
 
     def forward(self, x: Tensor, q_delta=None, v_delta=None) -> Tensor:
         bsz, seqlen, dim = x.shape
@@ -824,29 +821,30 @@ class LocalSlidingAttention(nn.Module):
         cos, sin = self.rotary(seqlen, x.device, q.dtype)
         q = apply_rotary_emb(q, cos, sin)
         k = apply_rotary_emb(k, cos, sin)
-        q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
+        # Bound learned query scaling; the paper does not rely on an unbounded q-gain.
+        q_scale = 2.0 * torch.sigmoid(self.q_gain.to(dtype=q.dtype))
+        q = q * q_scale[None, :, None, None]
         if self.num_kv_heads != self.num_heads:
             repeat = self.num_heads // self.num_kv_heads
             k = k.repeat_interleave(repeat, dim=1)
             v = v.repeat_interleave(repeat, dim=1)
-        if x.is_cuda:
-            y = flex_attention(q, k, v, block_mask=self._block_mask)
-        else:
-            # CPU fallback for simple smoke tests.
-            if self.window_size < seqlen:
-                rows = torch.arange(seqlen, device=x.device)
-                cols = torch.arange(seqlen, device=x.device)
-                mask = (cols[None, :] > rows[:, None]) | (
-                    cols[None, :] <= rows[:, None] - self.window_size
-                )
-                attn_mask = torch.zeros(
-                    1, 1, seqlen, seqlen, device=x.device, dtype=q.dtype
-                ).masked_fill(mask, float("-inf"))
-            else:
-                attn_mask = None
-            y = F.scaled_dot_product_attention(
-                q, k, v, attn_mask=attn_mask, is_causal=(attn_mask is None)
-            )
+        attn_mask = None
+        if self.window_size < seqlen:
+            if (
+                self._attn_mask is None
+                or self._attn_mask.size(-1) != seqlen
+                or self._attn_mask.device != x.device
+            ):
+                self._attn_mask = _build_local_attn_mask(self.window_size, seqlen, x.device)
+            attn_mask = self._attn_mask.to(dtype=q.dtype)
+        y = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=attn_mask,
+            is_causal=(attn_mask is None),
+            enable_gqa=False,
+        )
         y = y.transpose(1, 2).contiguous().reshape(bsz, seqlen, dim)
         return self.proj(y)
 
@@ -1359,7 +1357,7 @@ def main() -> None:
     restore_low_dim_params_to_fp32(base_model)
     for module in base_model.modules():
         if isinstance(module, LocalSlidingAttention):
-            module.warmup_block_mask(args.train_seq_len, device)
+            module.warmup_attn_mask(args.train_seq_len, device)
     compiled_model = torch.compile(base_model, dynamic=False, fullgraph=True)
     model: nn.Module = (
         DDP(compiled_model, device_ids=[local_rank], broadcast_buffers=False)
