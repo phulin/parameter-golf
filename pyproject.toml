@@ -26,10 +26,10 @@ mac = [
 ]
 
 [tool.uv.sources]
-numpy = { index = "pypi" }
 torch = { index = "pytorch" }
 
 [[tool.uv.index]]
 name = "pytorch"
 url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
