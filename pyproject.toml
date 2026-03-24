@@ -15,6 +15,7 @@ dependencies = [
     "torchdeq>=0.1.0",
     "tqdm>=4.67.3",
     "wandb>=0.23.0",
+    "zstandard>=0.25.0",
 ]
 
 [dependency-groups]
