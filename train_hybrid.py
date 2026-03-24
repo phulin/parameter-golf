@@ -59,8 +59,8 @@ class Hyperparameters:
 
     # Validation cadence and batch size. Validation always uses the full fineweb_val split.
     val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
-    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 1000))
-    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 200))
+    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 0))
+    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 5))
 
     # Training length.
     iterations = int(os.environ.get("ITERATIONS", 20000))
@@ -68,7 +68,7 @@ class Hyperparameters:
     lr_warmup_steps = int(os.environ.get("LR_WARMUP_STEPS", 5))
     lr_min_scale = float(os.environ.get("LR_MIN_SCALE", 0.1))
     warmup_steps = int(os.environ.get("WARMUP_STEPS", 20))
-    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 524_288))
+    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 131_072))
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
@@ -90,10 +90,10 @@ class Hyperparameters:
     # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
     head_lr = float(os.environ.get("HEAD_LR", 0.008))
-    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.05))
+    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.03))
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
-    matrix_lr = float(os.environ.get("MATRIX_LR", 0.04))
-    scalar_lr = float(os.environ.get("SCALAR_LR", 0.04))
+    matrix_lr = float(os.environ.get("MATRIX_LR", 0.02))
+    scalar_lr = float(os.environ.get("SCALAR_LR", 0.02))
     muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.95))
     muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))
     muon_momentum_warmup_start = float(
@@ -111,7 +111,7 @@ class Hyperparameters:
     ttt_chunk_size = int(os.environ.get("TTT_CHUNK_SIZE", 256))
     ttt_eval_seq_len = int(os.environ.get("TTT_EVAL_SEQ_LEN", 1024))
     ttt_batch_size = int(os.environ.get("TTT_BATCH_SIZE", 64))
-    ttt_eval_loops = int(os.environ.get("TTT_EVAL_LOOPS", 1))  # 0 = skip TTT eval
+    ttt_eval_loops = int(os.environ.get("TTT_EVAL_LOOPS", 0))  # 0 = skip TTT eval
 
 
 # -----------------------------
@@ -587,7 +587,14 @@ class TokenStream:
 class DistributedTokenLoader:
     # Each call consumes a contiguous chunk from the shared token stream, then slices out
     # one disjoint span per rank. The extra "+1" token lets us build (x, y) by shifting.
-    def __init__(self, pattern: str, rank: int, world_size: int, device: torch.device, shard_loader=None):
+    def __init__(
+        self,
+        pattern: str,
+        rank: int,
+        world_size: int,
+        device: torch.device,
+        shard_loader=None,
+    ):
         self.rank = rank
         self.world_size = world_size
         self.device = device
@@ -1273,7 +1280,9 @@ def main() -> None:
     actual_train_files = len(sorted(glob.glob(args.train_files)))
     if args.raw_bytes:
         if args.vocab_size != 256:
-            raise ValueError(f"RAW_BYTES mode requires VOCAB_SIZE=256, got {args.vocab_size}")
+            raise ValueError(
+                f"RAW_BYTES mode requires VOCAB_SIZE=256, got {args.vocab_size}"
+            )
         shard_loader = load_raw_bytes_shard
         val_tokens = load_validation_bytes(args.val_files, args.train_seq_len)
         base_bytes_lut, has_leading_space_lut, is_boundary_token_lut = (
@@ -1454,7 +1463,9 @@ def main() -> None:
     # DATA LOADER & MODEL WARMUP
     # -----------------------------
 
-    train_loader = DistributedTokenLoader(args.train_files, rank, world_size, device, shard_loader)
+    train_loader = DistributedTokenLoader(
+        args.train_files, rank, world_size, device, shard_loader
+    )
 
     def zero_grad_all() -> None:
         for opt in optimizers:
