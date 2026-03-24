@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+
+<html>
+
+<body>
+
+<div>
+<div>
+<article>
+<h1>Beyond Attention: Toward Machines with Intrinsic Higher Mental States</h1>
+<div>
+<span>
+<span>Ahsan Adeel
+</span><span>Conscious Multisensory Integration (CMI) Lab, University of Stirling, Stirling, UK and Computational Neuroscience Laboratory, John Radcliffe Hospital, Oxford, UK.
+<br/>Email: ahsan.adeel1@stir.ac.uk</span></span>
+</div>
+<div>
+<h6>Abstract</h6>
+<p><span>Attending to what is relevant is fundamental to both the mammalian brain and modern machine learning models such as Transformers. Yet, determining relevance remains a core challenge, traditionally offloaded to learning algorithms like backpropagation. Inspired by recent cellular neurobiological evidence linking neocortical pyramidal cells to distinct mental states, this work shows how models (e.g., Transformers) can emulate high-level perceptual processing and awake thought (imagination) states to pre-select relevant information before applying attention. Triadic neuronal-level modulation loops among questions (<math alttext="Q"><semantics><mi>Q</mi><annotation-xml><ci>𝑄</ci></annotation-xml><annotation>Q</annotation><annotation>italic_Q</annotation></semantics></math>), clues (keys, <math alttext="K"><semantics><mi>K</mi><annotation-xml><ci>𝐾</ci></annotation-xml><annotation>K</annotation><annotation>italic_K</annotation></semantics></math>), and hypotheses (values, <math alttext="V"><semantics><mi>V</mi><annotation-xml><ci>𝑉</ci></annotation-xml><annotation>V</annotation><annotation>italic_V</annotation></semantics></math>) enable diverse, deep, parallel reasoning chains at the representation level and allow a rapid shift from initial biases to refined understanding. This leads to orders-of-magnitude faster learning with significantly reduced computational demand (e.g., fewer heads, layers, and tokens), at an approximate cost of <math alttext="\mathcal{O}(N)"><semantics><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><mi>N</mi><mo>)</mo></mrow></mrow><annotation-xml><apply><times></times><ci>𝒪</ci><ci>𝑁</ci></apply></annotation-xml><annotation>\mathcal{O}(N)</annotation><annotation>caligraphic_O ( italic_N )</annotation></semantics></math>, where <span>N</span> is the number of input tokens. Results span reinforcement learning (e.g., CarRacing in a high-dimensional visual setup), computer vision, and natural language question answering.</span></p>
+</div>
+<section>
+<h2>
+<span>1 </span>Introduction</h2>
+<div>
+<p>Beyond the attention mechanisms used in modern artificial neural networks, such as the standard Transformer <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib1" title="">1</a>]</cite> and its variants, Perceiver <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib2" title="">2</a>]</cite> and Flamingo <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib3" title="">3</a>]</cite>, recent cellular neurobiological evidence <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib4" title="">4</a>]</cite> strongly suggests that transitions between distinct mental states (from wakefulness to slow-wave (SW) sleep and rapid eye movement (REM) sleep) modulate momentary interactions in layer 5 pyramidal two-point neurons (TPNs; Figure 1) <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib5" title="">5</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib6" title="">6</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib7" title="">7</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib8" title="">8</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib9" title="">9</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib10" title="">10</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib11" title="">11</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib12" title="">12</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib13" title="">13</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib14" title="">14</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib15" title="">15</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib16" title="">16</a>]</cite>. These interactions occur between inputs from the external world (receptive field, RF<span><sup>1</sup><span><span><sup>1</sup><span>1</span>RF: External world. The area in the sensory periphery where stimuli can affect the electrical activity of sensory cells.</span></span></span>) and the internal world (contextual field, CF<span><sup>2</sup><span><span><sup>2</sup><span>2</span>CF: Internal world. Information from a wide range of cortical and subcortical sources, including feedback.</span></span></span>), converging at two functionally distinct integration sites: (i) a basal site that integrates input to the soma and basal dendrites, and (ii) an apical site, integrating input to the apical dendrites.</p>
+</div>
+<div>
+<svg><g><g><path></path></g><g><path></path></g><g><foreignobject><span>
+<span>
+<span><span>Significance Statement and Future Directions: </span> In addition to demonstrating fast and economical learning by emulating high-level perceptual processing and awake (imaginative) thought states, the investigation presented here suggests that the mind constructs relevant context from available information to justify initial thoughts. If an initial thought is misleading, reaching a correct conclusion may require significantly more time, or may never occur at all, due to constrained cognitive resources. This leads to the following hypothesis: profound awareness arises from the ability to simultaneously evolve latent, rich, and coherent Q, K, and V representations in lockstep with reality, that is, at a pace matching the rate at which reality itself changes, as judgments are formed. Without this alignment, perception may be misleading or nothing more than an illusion. This applies only to observable reality.</span>
+</span></span></foreignobject></g></g></svg>
+</div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span>Figure 1: </span>A pyramidal two-point neuron in the mammalian neocortex <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib5" title="">5</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib4" title="">4</a>]</cite> integrates information at two functionally distinct sites. Its apical dendrites integrate CF at the contextual integration zone, while RF is integrated at the basal compartment, also known as the feedforward integration zone. The neuron triggers high-frequency firing (bursting) when RF and CF are matched in time, that is, when both the basal and apical zones are depolarized. This results in the amplification of coherent signals, enabling enhanced processing of contextually relevant information.</figcaption>
+</figure>
+<div>
+<p>During sensory perception, apical dendrites (CF), when receiving moderate to high input, typically amplify the transmission of information conveyed by feedforward (FF) basal or perisomatic input (RF). This context-sensitive cooperative amplification supports cognitive abilities excluding internally generated imagery and thought.
+<br/>When the apical input is high to maximal, it can independently drive the axonal spiking output, a condition associated with REM sleep and internally generated thought during wakefulness (imagination). When the apical input has no effect on the neuron’s current output, this state is linked to SW sleep. The flexible interaction between RF and CF inputs is suggested to be the hallmark of conscious processing <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib17" title="">17</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib18" title="">18</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib19" title="">19</a>]</cite>. Dysfunctional interactions between RF and CF inputs have been linked to intellectual learning disabilities <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib20" title="">20</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib21" title="">21</a>]</cite>.
+<br/>Inspired by these cellular mechanisms, a Cooperative Context-sensitive Cognitive Computation mechanism, abbreviated as <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>, has been developed for Transformers. Drawing on high-level perceptual processing and wakeful (imaginative) thought states, it enables on-the-fly selection of relevant information before attention is applied, through triadic modulation loops among latent questions (Q), clues (keys, K), and hypotheses (values, V), allowing for a rapid transition from raw input to refined conclusions.
+<br/>In the high-level perceptual processing state, K neurons provide moderate-to-high contextual input to Q neurons, amplifying only those Q elements that align with K and evolving a list of questions based on this context. Similarly, Q neurons provide contextual feedback to K neurons, amplifying only those K elements coherent with Q, thereby refining the context representation. In the wakeful (imaginative) state, hypotheses (V) evolve based on both Q and K, which together provide a high-to-maximal level of contextual input, followed by a concluding attention operation.
+<br/>In this process, Q dynamically adapts its inquiries based on the evolving K and V, while K adjusts its representation in response to posed questions and the evolving V, with V emerging from their bidirectional interaction. As a result, the system rapidly identifies coherent Q–K–V relationships, which are then processed by a lightweight attention mechanism across diverse, deep, and parallel reasoning chains.
+<br/>Unlike standard Transformers, which rely on Q–K similarity without internal reasoning or feedback and require deep stacks with costly <math alttext="\mathcal{O}(N^{2})"><semantics><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><msup><mi>N</mi><mn>2</mn></msup><mo>)</mo></mrow></mrow><annotation-xml><apply><times></times><ci>𝒪</ci><apply><csymbol>superscript</csymbol><ci>𝑁</ci><cn>2</cn></apply></apply></annotation-xml><annotation>\mathcal{O}(N^{2})</annotation><annotation>caligraphic_O ( italic_N start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT )</annotation></semantics></math> attention, this biologically inspired alternative enables efficient, context-sensitive reasoning at a representation-level Chain-of-Thought, with a significantly lower computational cost of approximately <math alttext="\mathcal{O}(N)"><semantics><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><mi>N</mi><mo>)</mo></mrow></mrow><annotation-xml><apply><times></times><ci>𝒪</ci><ci>𝑁</ci></apply></annotation-xml><annotation>\mathcal{O}(N)</annotation><annotation>caligraphic_O ( italic_N )</annotation></semantics></math>. This approach significantly accelerates learning and reduces computational demand compared to standard Transformers.</p>
+</div>
+</section>
+<section>
+<h2>
+<span>2 </span>Background</h2>
+<div>
+<p>The mechanism of flexibly combining top-down (CF) and bottom-up (RF) information streams provides the cellular foundation for computational theories of neocortical functioning <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib22" title="">22</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib23" title="">23</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib19" title="">19</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib17" title="">17</a>]</cite>. One of the most prominent computational frameworks for a dual-stream information flow is based on the principle of free energy minimization <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib24" title="">24</a>]</cite> or predictive coding (PC) <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib25" title="">25</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib26" title="">26</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib27" title="">27</a>]</cite> <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib28" title="">28</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib29" title="">29</a>]</cite>. 
+<br/>In PC, predictions as CF sent from higher to lower levels of processing attempt to attenuate the sensory signals RF that align with those predictions. Unaligned predictions are passed on to higher levels as prediction errors. Evidence on apical function contradicts the notion of subtractive prediction error coding because the two distinct sources lead to amplification when they agree (i.e., they are cooperative, not subtractive) <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib30" title="">30</a>]</cite>. This does not contradict the free energy principle, however, because that principle does not necessarily imply subtractive coding. 
+<br/>Computational neuroscientists have proposed various biologically plausible learning algorithms, including the recent burst-dependent synaptic plasticity (BDSP) <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib31" title="">31</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib32" title="">32</a>]</cite>, which distinguishes between a single spike and a burst of spikes. It uses the top-down (apical) zone of the TPN to receive FB signals (bursting rate <math alttext="b"><semantics><mi>b</mi><annotation-xml><ci>𝑏</ci></annotation-xml><annotation>b</annotation><annotation>italic_b</annotation></semantics></math>) from higher perceptual levels as CF. The difference between the instantaneous and moving average of <math alttext="b"><semantics><mi>b</mi><annotation-xml><ci>𝑏</ci></annotation-xml><annotation>b</annotation><annotation>italic_b</annotation></semantics></math> is multiplied by the event rate <span>(e)</span> or RF to update weights <span>(W)</span>. BDSP approximates loss-function gradients similar to backpropagation and performs comparably on complex image patterns, addressing the credit assignment problem effectively. However, BDSP and similar algorithms <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib33" title="">33</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib34" title="">34</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib35" title="">35</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib32" title="">32</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib36" title="">36</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib37" title="">37</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib38" title="">38</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib39" title="">39</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib40" title="">40</a>]</cite> focus mainly on apical inputs for learning. While their learning is TPN-inspired, their processing is not.
+<br/>In contrast, there is ample neurobiological evidence suggesting that context serves as a modulatory factor <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib30" title="">30</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib16" title="">16</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib41" title="">41</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib42" title="">42</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib6" title="">6</a>]</cite>. Neurophysiologists have proposed several biologically plausible asynchronous modulatory (MOD) transfer functions <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib16" title="">16</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib41" title="">41</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib42" title="">42</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib6" title="">6</a>]</cite> and their latest iterations <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib43" title="">43</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib44" title="">44</a>]</cite>; however, whether there are many applications in which deep neural nets (DNNs) inspired by these transfer functions can outperform Point Neurons (PNs) <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib45" title="">45</a>]</cite>-driven DNNs is yet to be seen.
+<br/>Recently a new TPN MOD function <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib45" title="">45</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib46" title="">46</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib47" title="">47</a>]</cite> incorporated not only FB from higher perceptual levels but also simultaneous events across hierarchies while processing FF information <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib17" title="">17</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib23" title="">23</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib48" title="">48</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib45" title="">45</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib46" title="">46</a>]</cite>. This MOD function uses CF to split the RF into coherent and incoherent streams at the cellular level, recombining only the coherent ones. The MOD function assigns greater weight to CF, amplifying or attenuating RF based on CF’s strength. 
+<br/>Recent computational results with convolutional neural nets (CNNs) <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib45" title="">45</a>]</cite> have shown that TPNs-inspired CNN with this MOD function minimizes the transmission of large amounts of conflicting FF information to higher perceptual levels, greatly reducing (by orders of magnitude) the number of neurons required to process large amounts of heterogeneous real-world audio-visual data compared to PN-inspired CNNs <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib45" title="">45</a>]</cite>. The most recent study in cellular psychology <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib4" title="">4</a>]</cite> links these types of MOD functions to apical drive (AD), which is utilized in <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>.</p>
+</div>
+</section>
+<section>
+<h2>
+<span>3 </span>Varying Strengths of RF and CF Across Distinct Mental States: An Illustrative Example</h2>
+<div>
+<p>Before introducing the <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> architecture, this section illustrates how the strength of RF and CF inputs, and their interaction, varies across high-level perceptual processing and awake thought (imagination) states.
+<br/>Read the ambiguous text in Figure 2 quickly at first, and then slowly <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib49" title="">49</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib50" title="">50</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib51" title="">51</a>]</cite>. When read quickly, our perception operates in a fast mode: automatic, pre-reflective, and anticipatory, neither too abstract nor too concrete <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib52" title="">52</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib53" title="">53</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib54" title="">54</a>]</cite>. We are able to focus on relevant information and decode it with a reasonable degree of confidence and coherence within that context. This corresponds to high-level perceptual processing <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib4" title="">4</a>]</cite>: a state of being awake and conscious, characterized by basic, intuitive judgments sufficient for routine activities and everyday interactions, also known as common sense <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib52" title="">52</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib53" title="">53</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib54" title="">54</a>]</cite>. In this state, the strength and interaction of both RF and CF inputs range from moderate to high (Mod–High), mediated by cholinergic, noradrenergic, and orexinergic systems <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib4" title="">4</a>]</cite>.
+<br/>Now, if we slow down and take more time to interpret the information from different perspectives, we begin to perceive how identical characters can be interpreted differently depending on the context. For instance, consider the second character in both words in the first row, although visually identical, it is interpreted differently. Likewise, the first character in the second row and the second character in the third row are the same, yet each is perceived uniquely. This reflects a wakeful (imaginative) thought state <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib4" title="">4</a>]</cite>: a heightened state of awareness and imagination that involves deep<span><sup>3</sup><span><span><sup>3</sup><span>3</span>Deep refers to the complex integration of diverse CFs at the cellular level, enabled by TPNs.</span></span></span>, slow, sequential, structured, deliberate, reflective, and well-justified judgments in context <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib55" title="">55</a>]</cite>. In this case, the strength and interaction of RF and CF inputs range from high to maximal (High–Max), mediated by cholinergic, noradrenergic, and orexinergic pathways <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib4" title="">4</a>]</cite>.
+
+<br/>Overall, the combination of high-level perceptual processing and awake thought helps us navigate uncertainty and explore deeper, more nuanced, and less obvious meanings, moving beyond the literal interpretations offered by attention alone.</p>
+</div>
+</section>
+<section>
+<h2>
+<span>4 </span><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> Architecture</h2>
+<div>
+<p>Going beyond the standard interaction of Q, K, and V in Transformers <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib1" title="">1</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib2" title="">2</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib3" title="">3</a>]</cite>, which collapses the rich functional distinctions between the RF and CF into an overly simplistic form, the <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> mechanism (Figure 3) dynamically tunes the latent question vectors (<math alttext="Q_{m}"><semantics><msub><mi>Q</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><ci>𝑚</ci></apply></annotation-xml><annotation>Q_{m}</annotation><annotation>italic_Q start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>), i.e., <span>what should be looked for</span>, based on evolving clues (<math alttext="K_{m}"><semantics><msub><mi>K</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐾</ci><ci>𝑚</ci></apply></annotation-xml><annotation>K_{m}</annotation><annotation>italic_K start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>) and hypotheses (<math alttext="V_{m}"><semantics><msub><mi>V</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑉</ci><ci>𝑚</ci></apply></annotation-xml><annotation>V_{m}</annotation><annotation>italic_V start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>). <math alttext="K_{m}"><semantics><msub><mi>K</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐾</ci><ci>𝑚</ci></apply></annotation-xml><annotation>K_{m}</annotation><annotation>italic_K start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math> evolves based on both <math alttext="Q_{m}"><semantics><msub><mi>Q</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><ci>𝑚</ci></apply></annotation-xml><annotation>Q_{m}</annotation><annotation>italic_Q start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math> and <math alttext="V_{m}"><semantics><msub><mi>V</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑉</ci><ci>𝑚</ci></apply></annotation-xml><annotation>V_{m}</annotation><annotation>italic_V start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>, while <math alttext="V_{m}"><semantics><msub><mi>V</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑉</ci><ci>𝑚</ci></apply></annotation-xml><annotation>V_{m}</annotation><annotation>italic_V start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math> evolves based on <math alttext="K_{m}"><semantics><msub><mi>K</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐾</ci><ci>𝑚</ci></apply></annotation-xml><annotation>K_{m}</annotation><annotation>italic_K start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math> and <math alttext="Q_{m}"><semantics><msub><mi>Q</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><ci>𝑚</ci></apply></annotation-xml><annotation>Q_{m}</annotation><annotation>italic_Q start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>. The triadic feedback loops allow latent <math alttext="Q_{m}"><semantics><msub><mi>Q</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><ci>𝑚</ci></apply></annotation-xml><annotation>Q_{m}</annotation><annotation>italic_Q start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math> tokens to adapt dynamically to both available information and emerging hypotheses. The modulated keys (<math alttext="K_{m}"><semantics><msub><mi>K</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐾</ci><ci>𝑚</ci></apply></annotation-xml><annotation>K_{m}</annotation><annotation>italic_K start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>) adapt each input token based on <span>who’s asking</span>, i.e., the latent <math alttext="Q_{m}"><semantics><msub><mi>Q</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><ci>𝑚</ci></apply></annotation-xml><annotation>Q_{m}</annotation><annotation>italic_Q start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>, and their evolving hypothesis, while the modulated values (<math alttext="V_{m}"><semantics><msub><mi>V</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑉</ci><ci>𝑚</ci></apply></annotation-xml><annotation>V_{m}</annotation><annotation>italic_V start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>) evolve specifically in response to both the latent questions and contextual clues, prior to the application of attention.</p>
+</div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span>Figure 2: </span>An example of “thinking fast and slow” as discussed in <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib49" title="">49</a>]</cite>, illustrates how solving a riddle can involve combining rapid, intuitive processing in high-level perceptual state (fast thinking) with more deliberate, reflective refinement in the awake thought state (slow thinking).</figcaption>
+</figure>
+<div>
+<p>In effect, the input token implicitly asks:</p>
+<blockquote>
+<p><span>“How should I present myself based on what this latent is trying to understand?”</span></p>
+</blockquote>
+<p>The execution of this reciprocally adaptive loop is made possible through the cooperation of TPNs. For example, when <span>L</span> latent <math alttext="Q"><semantics><mi>Q</mi><annotation-xml><ci>𝑄</ci></annotation-xml><annotation>Q</annotation><annotation>italic_Q</annotation></semantics></math> tokens are used, <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> generates <span>L</span> separate sets of <math alttext="(Q_{m},K_{m},V_{m})"><semantics><mrow><mo>(</mo><msub><mi>Q</mi><mi>m</mi></msub><mo>,</mo><msub><mi>K</mi><mi>m</mi></msub><mo>,</mo><msub><mi>V</mi><mi>m</mi></msub><mo>)</mo></mrow><annotation-xml><vector><apply><csymbol>subscript</csymbol><ci>𝑄</ci><ci>𝑚</ci></apply><apply><csymbol>subscript</csymbol><ci>𝐾</ci><ci>𝑚</ci></apply><apply><csymbol>subscript</csymbol><ci>𝑉</ci><ci>𝑚</ci></apply></vector></annotation-xml><annotation>(Q_{m},K_{m},V_{m})</annotation><annotation>( italic_Q start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT , italic_K start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT , italic_V start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT )</annotation></semantics></math>, each experiencing a custom triadic interaction, although after this interaction, they are averaged to avoid implementation complexity and have a simple attention map of <math alttext="\mathcal{O}(L\times N)"><semantics><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mi>L</mi><mo>×</mo><mi>N</mi></mrow><mo>)</mo></mrow></mrow><annotation-xml><apply><times></times><ci>𝒪</ci><apply><times></times><ci>𝐿</ci><ci>𝑁</ci></apply></apply></annotation-xml><annotation>\mathcal{O}(L\times N)</annotation><annotation>caligraphic_O ( italic_L × italic_N )</annotation></semantics></math>, virtually each latent, produces its own attention map over the input sequence. 
+<br/>This multi-perspective deep reasoning at the layer level helps explain why <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> achieves strong performance with significantly fewer layers and attention heads compared to standard Transformers. <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> incorporates a high-level symbolic (human-readable) representation similar to Symbolic AI, also known as Good Old-Fashioned AI (GOFAI).</p>
+</div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span>Figure 3: </span><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> architecture: <math alttext="N"><semantics><mi>N</mi><annotation-xml><ci>𝑁</ci></annotation-xml><annotation>N</annotation><annotation>italic_N</annotation></semantics></math> denotes the number of input tokens, and each token has an embedding dimension of <math alttext="E"><semantics><mi>E</mi><annotation-xml><ci>𝐸</ci></annotation-xml><annotation>E</annotation><annotation>italic_E</annotation></semantics></math>. <math alttext="Q_{1}"><semantics><msub><mi>Q</mi><mn>1</mn></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><cn>1</cn></apply></annotation-xml><annotation>Q_{1}</annotation><annotation>italic_Q start_POSTSUBSCRIPT 1 end_POSTSUBSCRIPT</annotation></semantics></math>, <math alttext="Q_{2}"><semantics><msub><mi>Q</mi><mn>2</mn></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><cn>2</cn></apply></annotation-xml><annotation>Q_{2}</annotation><annotation>italic_Q start_POSTSUBSCRIPT 2 end_POSTSUBSCRIPT</annotation></semantics></math>,…,<math alttext="Q_{L}"><semantics><msub><mi>Q</mi><mi>L</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><ci>𝐿</ci></apply></annotation-xml><annotation>Q_{L}</annotation><annotation>italic_Q start_POSTSUBSCRIPT italic_L end_POSTSUBSCRIPT</annotation></semantics></math> represent the latent query tokens input to the associated Q-TPNs. <math alttext="K_{1}"><semantics><msub><mi>K</mi><mn>1</mn></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐾</ci><cn>1</cn></apply></annotation-xml><annotation>K_{1}</annotation><annotation>italic_K start_POSTSUBSCRIPT 1 end_POSTSUBSCRIPT</annotation></semantics></math>, <math alttext="K_{2}"><semantics><msub><mi>K</mi><mn>2</mn></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐾</ci><cn>2</cn></apply></annotation-xml><annotation>K_{2}</annotation><annotation>italic_K start_POSTSUBSCRIPT 2 end_POSTSUBSCRIPT</annotation></semantics></math>,…,<math alttext="K_{N}"><semantics><msub><mi>K</mi><mi>N</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐾</ci><ci>𝑁</ci></apply></annotation-xml><annotation>K_{N}</annotation><annotation>italic_K start_POSTSUBSCRIPT italic_N end_POSTSUBSCRIPT</annotation></semantics></math> represent the Key tokens input to the associated K-TPNs. <math alttext="V_{1}"><semantics><msub><mi>V</mi><mn>1</mn></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑉</ci><cn>1</cn></apply></annotation-xml><annotation>V_{1}</annotation><annotation>italic_V start_POSTSUBSCRIPT 1 end_POSTSUBSCRIPT</annotation></semantics></math>, <math alttext="V_{2}"><semantics><msub><mi>V</mi><mn>2</mn></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑉</ci><cn>2</cn></apply></annotation-xml><annotation>V_{2}</annotation><annotation>italic_V start_POSTSUBSCRIPT 2 end_POSTSUBSCRIPT</annotation></semantics></math>,…,<math alttext="V_{N}"><semantics><msub><mi>V</mi><mi>N</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑉</ci><ci>𝑁</ci></apply></annotation-xml><annotation>V_{N}</annotation><annotation>italic_V start_POSTSUBSCRIPT italic_N end_POSTSUBSCRIPT</annotation></semantics></math> represent the Value tokens input to the associated V-TPNs. This configuration forms part of the “seeing” state (i.e., sensory processing). In the “seeing as” state (i.e., perceptual and interpretive state), triadic modulation loops among questions (<math alttext="Q"><semantics><mi>Q</mi><annotation-xml><ci>𝑄</ci></annotation-xml><annotation>Q</annotation><annotation>italic_Q</annotation></semantics></math>), clues (keys, <math alttext="K"><semantics><mi>K</mi><annotation-xml><ci>𝐾</ci></annotation-xml><annotation>K</annotation><annotation>italic_K</annotation></semantics></math>), and hypotheses (values, <math alttext="V"><semantics><mi>V</mi><annotation-xml><ci>𝑉</ci></annotation-xml><annotation>V</annotation><annotation>italic_V</annotation></semantics></math>) are executed through distal (D) and universal (U) contexts. Proximal (P) context represents normalization via information from neighboring neurons in the same population, including the prior information from the same neuron. The TPNs associated with <math alttext="Q"><semantics><mi>Q</mi><annotation-xml><ci>𝑄</ci></annotation-xml><annotation>Q</annotation><annotation>italic_Q</annotation></semantics></math>, <math alttext="K"><semantics><mi>K</mi><annotation-xml><ci>𝐾</ci></annotation-xml><annotation>K</annotation><annotation>italic_K</annotation></semantics></math>, and <math alttext="V"><semantics><mi>V</mi><annotation-xml><ci>𝑉</ci></annotation-xml><annotation>V</annotation><annotation>italic_V</annotation></semantics></math> are assumed to be analogous to three subtypes of pyramidal neurons, although their exact correspondence to neurobiologically distinguished subtypes is still under investigation. Through varying states of mind, high-level perceptual processing and wakeful thought, diverse, parallel reasoning chains are enabled. This mechanism incurs a computational cost of <math alttext="\mathcal{O}(N\cdot L)"><semantics><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mi>N</mi><mo>⋅</mo><mi>L</mi></mrow><mo>)</mo></mrow></mrow><annotation-xml><apply><times></times><ci>𝒪</ci><apply><ci>⋅</ci><ci>𝑁</ci><ci>𝐿</ci></apply></apply></annotation-xml><annotation>\mathcal{O}(N\cdot L)</annotation><annotation>caligraphic_O ( italic_N ⋅ italic_L )</annotation></semantics></math>, where <math alttext="L"><semantics><mi>L</mi><annotation-xml><ci>𝐿</ci></annotation-xml><annotation>L</annotation><annotation>italic_L</annotation></semantics></math> is a small fraction of the input length, making the overall cost approximately <math alttext="\mathcal{O}(N)"><semantics><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><mi>N</mi><mo>)</mo></mrow></mrow><annotation-xml><apply><times></times><ci>𝒪</ci><ci>𝑁</ci></apply></annotation-xml><annotation>\mathcal{O}(N)</annotation><annotation>caligraphic_O ( italic_N )</annotation></semantics></math>. The triadic modulation loops, based on element-wise operations, add a nominal cost of <math alttext="L\cdot N\cdot E"><semantics><mrow><mi>L</mi><mo>⋅</mo><mi>N</mi><mo>⋅</mo><mi>E</mi></mrow><annotation-xml><apply><ci>⋅</ci><ci>𝐿</ci><ci>𝑁</ci><ci>𝐸</ci></apply></annotation-xml><annotation>L\cdot N\cdot E</annotation><annotation>italic_L ⋅ italic_N ⋅ italic_E</annotation></semantics></math>, which is significantly lower than that of the feedforward residual network used in standard Transformer blocks, a component <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> does not require. <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> can be viewed as a parallel, representation-level, silent yet deep form of Chain-of-Thought (CoT) reasoning <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib56" title="">56</a>]</cite> (a quiet mind), enabling multi-perspective inference without requiring sequential token-level generation, much like the brain’s cortico-thalamic modulation <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib17" title="">17</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib4" title="">4</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib18" title="">18</a>]</cite>.</figcaption>
+</figure>
+<figure><img alt="Refer to caption"/>
+<figcaption><span>Figure 4: </span>The TPN-inspired asynchronous MOD function (unnormalized) uses CF, denoted as <math alttext="C"><semantics><mi>C</mi><annotation-xml><ci>𝐶</ci></annotation-xml><annotation>C</annotation><annotation>italic_C</annotation></semantics></math>, to selectively amplify or attenuate the transmission of relevant and irrelevant RF, denoted as <math alttext="R"><semantics><mi>R</mi><annotation-xml><ci>𝑅</ci></annotation-xml><annotation>R</annotation><annotation>italic_R</annotation></semantics></math>, respectively. C serves as the driving force because the strong contextual signals from neighboring neurons can override even strong but noisy <math alttext="R"><semantics><mi>R</mi><annotation-xml><ci>𝑅</ci></annotation-xml><annotation>R</annotation><annotation>italic_R</annotation></semantics></math> signals at the single-cell level. The combined perceptions of multiple neighboring neurons, each drawing from diverse and contextually relevant sources, carry more weight than the output of any individual neuron. This mechanism enhances cooperation between R and C for the task at hand. This behavior becomes particularly significant at higher levels of abstraction, where imagination begins to emerge and direct perception becomes less dominant. </figcaption>
+</figure>
+<figure><img alt="Refer to caption"/>
+<figcaption><span>Figure 5: </span>Vector field visualization and contour plots for deeper insight into the MOD function. The MOD function utilizes C to split R into coherent and incoherent R streams. The MOD function assigns greater weight to C; if C is high, and R is negative, the output of the function in eq (1) is positive (i.e. it makes f(C,R) have a different sign from R). Conversely, if C is low, R is diminished regardless of its own value.</figcaption>
+</figure>
+<div>
+<p>Specifically, given an input of <math alttext="N"><semantics><mi>N</mi><annotation-xml><ci>𝑁</ci></annotation-xml><annotation>N</annotation><annotation>italic_N</annotation></semantics></math> tokens with embedding size <math alttext="E"><semantics><mi>E</mi><annotation-xml><ci>𝐸</ci></annotation-xml><annotation>E</annotation><annotation>italic_E</annotation></semantics></math>, TPNs associated with latent <math alttext="Q"><semantics><mi>Q</mi><annotation-xml><ci>𝑄</ci></annotation-xml><annotation>Q</annotation><annotation>italic_Q</annotation></semantics></math>, <math alttext="K"><semantics><mi>K</mi><annotation-xml><ci>𝐾</ci></annotation-xml><annotation>K</annotation><annotation>italic_K</annotation></semantics></math>, and <math alttext="V"><semantics><mi>V</mi><annotation-xml><ci>𝑉</ci></annotation-xml><annotation>V</annotation><annotation>italic_V</annotation></semantics></math> extract:</p>
+<ol>
+<li>
+<span>1.</span>
+<div>
+<p>A set of modulated evolving questions (<math alttext="Q_{m}"><semantics><msub><mi>Q</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><ci>𝑚</ci></apply></annotation-xml><annotation>Q_{m}</annotation><annotation>italic_Q start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>), dynamically tailored to the evolving context (<math alttext="K_{m}"><semantics><msub><mi>K</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐾</ci><ci>𝑚</ci></apply></annotation-xml><annotation>K_{m}</annotation><annotation>italic_K start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>) and hypothesis (<math alttext="V_{m}"><semantics><msub><mi>V</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑉</ci><ci>𝑚</ci></apply></annotation-xml><annotation>V_{m}</annotation><annotation>italic_V start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>).</p>
+</div>
+</li>
+<li>
+<span>2.</span>
+<div>
+<p>An evolving context (<math alttext="K_{m}"><semantics><msub><mi>K</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐾</ci><ci>𝑚</ci></apply></annotation-xml><annotation>K_{m}</annotation><annotation>italic_K start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>) shaped in response to these questions (<math alttext="Q_{m}"><semantics><msub><mi>Q</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><ci>𝑚</ci></apply></annotation-xml><annotation>Q_{m}</annotation><annotation>italic_Q start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>) and hypothesis (<math alttext="V_{m}"><semantics><msub><mi>V</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑉</ci><ci>𝑚</ci></apply></annotation-xml><annotation>V_{m}</annotation><annotation>italic_V start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>).</p>
+</div>
+</li>
+<li>
+<span>3.</span>
+<div>
+<p>A set of possible hypotheses (<math alttext="V_{m}"><semantics><msub><mi>V</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑉</ci><ci>𝑚</ci></apply></annotation-xml><annotation>V_{m}</annotation><annotation>italic_V start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>) generated from the coherent interaction of <math alttext="Q_{m}"><semantics><msub><mi>Q</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><ci>𝑚</ci></apply></annotation-xml><annotation>Q_{m}</annotation><annotation>italic_Q start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math> and <math alttext="K_{m}"><semantics><msub><mi>K</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐾</ci><ci>𝑚</ci></apply></annotation-xml><annotation>K_{m}</annotation><annotation>italic_K start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>.</p>
+</div>
+</li>
+<li>
+<span>4.</span>
+<div>
+<p>Each latent virtually generates its own attention map over the input sequence, even though this does not occur explicitly in implementation.</p>
+</div>
+</li>
+</ol>
+</div>
+<div>
+<p>To generate coherent <math alttext="Q_{m}"><semantics><msub><mi>Q</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><ci>𝑚</ci></apply></annotation-xml><annotation>Q_{m}</annotation><annotation>italic_Q start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>, <math alttext="Q"><semantics><mi>Q</mi><annotation-xml><ci>𝑄</ci></annotation-xml><annotation>Q</annotation><annotation>italic_Q</annotation></semantics></math> must act as the RF, while <math alttext="K"><semantics><mi>K</mi><annotation-xml><ci>𝐾</ci></annotation-xml><annotation>K</annotation><annotation>italic_K</annotation></semantics></math> and <math alttext="V"><semantics><mi>V</mi><annotation-xml><ci>𝑉</ci></annotation-xml><annotation>V</annotation><annotation>italic_V</annotation></semantics></math> serve as the CF. To generate coherent <math alttext="K_{m}"><semantics><msub><mi>K</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐾</ci><ci>𝑚</ci></apply></annotation-xml><annotation>K_{m}</annotation><annotation>italic_K start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>, <math alttext="K"><semantics><mi>K</mi><annotation-xml><ci>𝐾</ci></annotation-xml><annotation>K</annotation><annotation>italic_K</annotation></semantics></math> must act as the RF, with <math alttext="Q"><semantics><mi>Q</mi><annotation-xml><ci>𝑄</ci></annotation-xml><annotation>Q</annotation><annotation>italic_Q</annotation></semantics></math> and <math alttext="V"><semantics><mi>V</mi><annotation-xml><ci>𝑉</ci></annotation-xml><annotation>V</annotation><annotation>italic_V</annotation></semantics></math> as CF. In this state, the strength and interaction of RF and CF inputs range from moderate to high, representing the high-level perceptual processing state <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib4" title="">4</a>]</cite>. To generate coherent hypotheses <math alttext="V_{m}"><semantics><msub><mi>V</mi><mi>m</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑉</ci><ci>𝑚</ci></apply></annotation-xml><annotation>V_{m}</annotation><annotation>italic_V start_POSTSUBSCRIPT italic_m end_POSTSUBSCRIPT</annotation></semantics></math>, <math alttext="V"><semantics><mi>V</mi><annotation-xml><ci>𝑉</ci></annotation-xml><annotation>V</annotation><annotation>italic_V</annotation></semantics></math> must act as the RF, while both <math alttext="Q"><semantics><mi>Q</mi><annotation-xml><ci>𝑄</ci></annotation-xml><annotation>Q</annotation><annotation>italic_Q</annotation></semantics></math> and <math alttext="K"><semantics><mi>K</mi><annotation-xml><ci>𝐾</ci></annotation-xml><annotation>K</annotation><annotation>italic_K</annotation></semantics></math> serve as CF. As we transition from fast to slow thinking (i.e., the wakeful state), the influence of CF on the interpretation of RF increases, implying that the interaction between RF and CF shifts from high to Max <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib4" title="">4</a>]</cite>.
+<br/>Each TPN uses an asynchronous MOD function<span><sup>4</sup><span><span><sup>4</sup><span>4</span>There may be several other applicable variations of such functions, including those proposed elsewhere.</span></span></span> (Figure 4) to selectively amplify relevant RF transmissions and attenuate irrelevant ones within the given CF. This asynchronous MOD function, termed the <span>Cooperation Equation</span>, is defined as:</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\text{Cooperation}(R,C)=\text{ReLU6}\left(R^{2}+2R+C(1+|R|)\right)"><semantics><mrow><mrow><mtext>Cooperation</mtext><mo>⁢</mo><mrow><mo>(</mo><mi>R</mi><mo>,</mo><mi>C</mi><mo>)</mo></mrow></mrow><mo>=</mo><mrow><mtext>ReLU6</mtext><mo>⁢</mo><mrow><mo>(</mo><mrow><msup><mi>R</mi><mn>2</mn></msup><mo>+</mo><mrow><mn>2</mn><mo>⁢</mo><mi>R</mi></mrow><mo>+</mo><mrow><mi>C</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mn>1</mn><mo>+</mo><mrow><mo>|</mo><mi>R</mi><mo>|</mo></mrow></mrow><mo>)</mo></mrow></mrow></mrow><mo>)</mo></mrow></mrow></mrow><annotation-xml><apply><eq></eq><apply><times></times><ci><mtext>Cooperation</mtext></ci><interval><ci>𝑅</ci><ci>𝐶</ci></interval></apply><apply><times></times><ci><mtext>ReLU6</mtext></ci><apply><plus></plus><apply><csymbol>superscript</csymbol><ci>𝑅</ci><cn>2</cn></apply><apply><times></times><cn>2</cn><ci>𝑅</ci></apply><apply><times></times><ci>𝐶</ci><apply><plus></plus><cn>1</cn><apply><abs></abs><ci>𝑅</ci></apply></apply></apply></apply></apply></apply></annotation-xml><annotation>\text{Cooperation}(R,C)=\text{ReLU6}\left(R^{2}+2R+C(1+|R|)\right)</annotation><annotation>Cooperation ( italic_R , italic_C ) = ReLU6 ( italic_R start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT + 2 italic_R + italic_C ( 1 + | italic_R | ) )</annotation></semantics></math></td>
+<td></td>
+<td><span>(1)</span></td>
+</tr></tbody>
+</table>
+</div>
+<div>
+<p>where <math alttext="R"><semantics><mi>R</mi><annotation-xml><ci>𝑅</ci></annotation-xml><annotation>R</annotation><annotation>italic_R</annotation></semantics></math> represents the RF and <math alttext="C"><semantics><mi>C</mi><annotation-xml><ci>𝐶</ci></annotation-xml><annotation>C</annotation><annotation>italic_C</annotation></semantics></math> represents the CF. ReLU6 is a variant of the Rectified Linear Unit (ReLU) activation function commonly used in deep learning models and defined as:</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\mathrm{ReLU6}(x)\;=\;\min\!\bigl{(}6,\;\max(0,\,x)\bigr{)}"><semantics><mrow><mrow><mi>ReLU6</mi><mo>⁢</mo><mrow><mo>(</mo><mi>x</mi><mo>)</mo></mrow></mrow><mo>=</mo><mrow><mpadded><mi>min</mi></mpadded><mo>⁡</mo><mrow><mo>(</mo><mn>6</mn><mo>,</mo><mrow><mi>max</mi><mo>⁡</mo><mrow><mo>(</mo><mn>0</mn><mo>,</mo><mi>x</mi><mo>)</mo></mrow></mrow><mo>)</mo></mrow></mrow></mrow><annotation-xml><apply><eq></eq><apply><times></times><ci>ReLU6</ci><ci>𝑥</ci></apply><apply><min></min><cn>6</cn><apply><max></max><cn>0</cn><ci>𝑥</ci></apply></apply></apply></annotation-xml><annotation>\mathrm{ReLU6}(x)\;=\;\min\!\bigl{(}6,\;\max(0,\,x)\bigr{)}</annotation><annotation>ReLU6 ( italic_x ) = roman_min ( 6 , roman_max ( 0 , italic_x ) )</annotation></semantics></math></td>
+<td></td>
+</tr></tbody>
+</table>
+</div>
+<div>
+<p>In this equation, C as a ‘modulatory force’ pushes the information to the positive side of the activation function (e.g., ReLU6) if R is relevant, otherwise to the negative side. In essence, strong C can discourage or encourage amplification of neural activity regardless of R’s strength (strong or weak). The value of C captures the strength of the signal, but different approximate ranges of this value are distinctly associated with different mental states. The differing behaviour reflects the nonlinearity in the interaction between C and R. 
+<br/>This behavior aligns with evidence showing that “thinking” involves AD during wakefulness, particularly when both acetylcholine (ACh) and sodium (Na) ion levels are elevated <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib4" title="">4</a>]</cite>. It is consistent with high-resolution neuroimaging studies <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib46" title="">46</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib4" title="">4</a>]</cite> showing that imagination activates perception-related brain regions by generating missing information from memory, implying that CF can override RF. This phenomenon is also known as <span>filling in</span>. 
+<br/>While there is no independent parameter explicitly defining the importance or strength of C, its non-linear influence in the behavior of eq (1) allows its effect to vary dynamically across different processing stages. This non-linear amplification can be interpreted as capturing the importance of the context: when the context is strongly aligned or misaligned with the response, its effect is magnified. This behavior effectively implements the idea that the influence of context is stage-dependent, even without introducing a dedicated parameter for the “degree of importance”. 
+<br/>To provide a more precise and deep insight into the MOD function, the vector field visualization and contour plots are presented in Figure 5 showing how the output of the equation varies across a range of values for R and C. The MOD function uses C to conditionally segregate the coherent and incoherent R signals. C is the driving force; if C is high, R is amplified regardless of its own strength and if C is low, R is attenuated regardless of its own strength. 
+<br/>The vector field plot (left) shows the direction and magnitude of the output across the space. The contour plot (right) displays the magnitude of the output across the R-C space where the contour lines show levels of equal magnitude, giving us insight into how the equations behave differently across the space. 
+<br/>Specifically, the vector field plot illustrates the gradients (partial derivatives) of the MOD function. Each arrow shows the gradient’s direction and magnitude at specific points, where the direction indicates the steepest ascent of the function, and the length reflects the rate of change. Diagonal arrows, especially in regions with positive R, suggest that both R and C contribute positively to the gradient. Dense or long arrows highlight areas of rapid change (steep slopes), while sparse or short arrows indicate slower changes, which filter and reshape representations—mitigating vanishing gradient by modulating abrupt transitions when context and signal are mismatched.
+<br/>The contour lines, on the contour plot, connect points of equal function value, with closer lines indicating rapid changes and spaced lines indicating slower changes. The color gradient reflects function magnitude, with darker colors representing higher values. The color bar on the side provides a reference for these values. 
+<br/>Below are the alternative well-established TPNs-inspired asynchronous MOD functions <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib57" title="">57</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib6" title="">6</a>]</cite>. In these modulatory transfer functions (<math alttext="T_{M}"><semantics><msub><mi>T</mi><mi>M</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑇</ci><ci>𝑀</ci></apply></annotation-xml><annotation>T_{M}</annotation><annotation>italic_T start_POSTSUBSCRIPT italic_M end_POSTSUBSCRIPT</annotation></semantics></math>) eq (2-5), R is the driving force i.e., if R is absent or strong, C has no role to play.</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="T_{M1}(R,C)=\frac{1}{2}R(1+exp(RC))"><semantics><mrow><mrow><msub><mi>T</mi><mrow><mi>M</mi><mo>⁢</mo><mn>1</mn></mrow></msub><mo>⁢</mo><mrow><mo>(</mo><mi>R</mi><mo>,</mo><mi>C</mi><mo>)</mo></mrow></mrow><mo>=</mo><mrow><mfrac><mn>1</mn><mn>2</mn></mfrac><mo>⁢</mo><mi>R</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mn>1</mn><mo>+</mo><mrow><mi>e</mi><mo>⁢</mo><mi>x</mi><mo>⁢</mo><mi>p</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mi>R</mi><mo>⁢</mo><mi>C</mi></mrow><mo>)</mo></mrow></mrow></mrow><mo>)</mo></mrow></mrow></mrow><annotation-xml><apply><eq></eq><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑇</ci><apply><times></times><ci>𝑀</ci><cn>1</cn></apply></apply><interval><ci>𝑅</ci><ci>𝐶</ci></interval></apply><apply><times></times><apply><divide></divide><cn>1</cn><cn>2</cn></apply><ci>𝑅</ci><apply><plus></plus><cn>1</cn><apply><times></times><ci>𝑒</ci><ci>𝑥</ci><ci>𝑝</ci><apply><times></times><ci>𝑅</ci><ci>𝐶</ci></apply></apply></apply></apply></apply></annotation-xml><annotation>T_{M1}(R,C)=\frac{1}{2}R(1+exp(RC))</annotation><annotation>italic_T start_POSTSUBSCRIPT italic_M 1 end_POSTSUBSCRIPT ( italic_R , italic_C ) = divide start_ARG 1 end_ARG start_ARG 2 end_ARG italic_R ( 1 + italic_e italic_x italic_p ( italic_R italic_C ) )</annotation></semantics></math></td>
+<td></td>
+<td><span>(2)</span></td>
+</tr></tbody>
+</table>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="T_{M2}(R,C)=R+RC"><semantics><mrow><mrow><msub><mi>T</mi><mrow><mi>M</mi><mo>⁢</mo><mn>2</mn></mrow></msub><mo>⁢</mo><mrow><mo>(</mo><mi>R</mi><mo>,</mo><mi>C</mi><mo>)</mo></mrow></mrow><mo>=</mo><mrow><mi>R</mi><mo>+</mo><mrow><mi>R</mi><mo>⁢</mo><mi>C</mi></mrow></mrow></mrow><annotation-xml><apply><eq></eq><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑇</ci><apply><times></times><ci>𝑀</ci><cn>2</cn></apply></apply><interval><ci>𝑅</ci><ci>𝐶</ci></interval></apply><apply><plus></plus><ci>𝑅</ci><apply><times></times><ci>𝑅</ci><ci>𝐶</ci></apply></apply></apply></annotation-xml><annotation>T_{M2}(R,C)=R+RC</annotation><annotation>italic_T start_POSTSUBSCRIPT italic_M 2 end_POSTSUBSCRIPT ( italic_R , italic_C ) = italic_R + italic_R italic_C</annotation></semantics></math></td>
+<td></td>
+<td><span>(3)</span></td>
+</tr></tbody>
+</table>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="T_{M3}(R,C)=R(1+tanh(RC))"><semantics><mrow><mrow><msub><mi>T</mi><mrow><mi>M</mi><mo>⁢</mo><mn>3</mn></mrow></msub><mo>⁢</mo><mrow><mo>(</mo><mi>R</mi><mo>,</mo><mi>C</mi><mo>)</mo></mrow></mrow><mo>=</mo><mrow><mi>R</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mn>1</mn><mo>+</mo><mrow><mi>t</mi><mo>⁢</mo><mi>a</mi><mo>⁢</mo><mi>n</mi><mo>⁢</mo><mi>h</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mi>R</mi><mo>⁢</mo><mi>C</mi></mrow><mo>)</mo></mrow></mrow></mrow><mo>)</mo></mrow></mrow></mrow><annotation-xml><apply><eq></eq><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑇</ci><apply><times></times><ci>𝑀</ci><cn>3</cn></apply></apply><interval><ci>𝑅</ci><ci>𝐶</ci></interval></apply><apply><times></times><ci>𝑅</ci><apply><plus></plus><cn>1</cn><apply><times></times><ci>𝑡</ci><ci>𝑎</ci><ci>𝑛</ci><ci>ℎ</ci><apply><times></times><ci>𝑅</ci><ci>𝐶</ci></apply></apply></apply></apply></apply></annotation-xml><annotation>T_{M3}(R,C)=R(1+tanh(RC))</annotation><annotation>italic_T start_POSTSUBSCRIPT italic_M 3 end_POSTSUBSCRIPT ( italic_R , italic_C ) = italic_R ( 1 + italic_t italic_a italic_n italic_h ( italic_R italic_C ) )</annotation></semantics></math></td>
+<td></td>
+<td><span>(4)</span></td>
+</tr></tbody>
+</table>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="T_{M4}(R,C)=R(2^{RC})"><semantics><mrow><mrow><msub><mi>T</mi><mrow><mi>M</mi><mo>⁢</mo><mn>4</mn></mrow></msub><mo>⁢</mo><mrow><mo>(</mo><mi>R</mi><mo>,</mo><mi>C</mi><mo>)</mo></mrow></mrow><mo>=</mo><mrow><mi>R</mi><mo>⁢</mo><mrow><mo>(</mo><msup><mn>2</mn><mrow><mi>R</mi><mo>⁢</mo><mi>C</mi></mrow></msup><mo>)</mo></mrow></mrow></mrow><annotation-xml><apply><eq></eq><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑇</ci><apply><times></times><ci>𝑀</ci><cn>4</cn></apply></apply><interval><ci>𝑅</ci><ci>𝐶</ci></interval></apply><apply><times></times><ci>𝑅</ci><apply><csymbol>superscript</csymbol><cn>2</cn><apply><times></times><ci>𝑅</ci><ci>𝐶</ci></apply></apply></apply></apply></annotation-xml><annotation>T_{M4}(R,C)=R(2^{RC})</annotation><annotation>italic_T start_POSTSUBSCRIPT italic_M 4 end_POSTSUBSCRIPT ( italic_R , italic_C ) = italic_R ( 2 start_POSTSUPERSCRIPT italic_R italic_C end_POSTSUPERSCRIPT )</annotation></semantics></math></td>
+<td></td>
+<td><span>(5)</span></td>
+</tr></tbody>
+</table>
+<p>The use of eq (1) was guided by empirical experiments with various nonlinear RF functions, including those presented above and their latest iterations <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib58" title="">58</a>]</cite>, with the chosen version performing well. Nevertheless, further critical testing is needed, including testing Partial Information Decomposition <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib44" title="">44</a>]</cite> resulting from eq (1).</p>
+</div>
+<section>
+<h3>
+<span>4.1 </span>Computational Complexity</h3>
+<div>
+<p><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> has a computational complexity of</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\mathcal{O}(L\cdot N+\alpha)"><semantics><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mrow><mi>L</mi><mo>⋅</mo><mi>N</mi></mrow><mo>+</mo><mi>α</mi></mrow><mo>)</mo></mrow></mrow><annotation-xml><apply><times></times><ci>𝒪</ci><apply><plus></plus><apply><ci>⋅</ci><ci>𝐿</ci><ci>𝑁</ci></apply><ci>𝛼</ci></apply></apply></annotation-xml><annotation>\mathcal{O}(L\cdot N+\alpha)</annotation><annotation>caligraphic_O ( italic_L ⋅ italic_N + italic_α )</annotation></semantics></math></td>
+<td></td>
+</tr></tbody>
+</table>
+<p>where <math alttext="N"><semantics><mi>N</mi><annotation-xml><ci>𝑁</ci></annotation-xml><annotation>N</annotation><annotation>italic_N</annotation></semantics></math> is the number of input tokens (patches or words), <math alttext="L"><semantics><mi>L</mi><annotation-xml><ci>𝐿</ci></annotation-xml><annotation>L</annotation><annotation>italic_L</annotation></semantics></math> is the number of latent tokens, and <math alttext="\alpha"><semantics><mi>α</mi><annotation-xml><ci>𝛼</ci></annotation-xml><annotation>\alpha</annotation><annotation>italic_α</annotation></semantics></math> accounts for additional element-wise operations. Instead of full attention between all <math alttext="N"><semantics><mi>N</mi><annotation-xml><ci>𝑁</ci></annotation-xml><annotation>N</annotation><annotation>italic_N</annotation></semantics></math> tokens,</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\Rightarrow\mathcal{O}(N^{2}),"><semantics><mrow><mrow><mi></mi><mo>⇒</mo><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><msup><mi>N</mi><mn>2</mn></msup><mo>)</mo></mrow></mrow></mrow><mo>,</mo></mrow><annotation-xml><apply><ci>⇒</ci><csymbol>absent</csymbol><apply><times></times><ci>𝒪</ci><apply><csymbol>superscript</csymbol><ci>𝑁</ci><cn>2</cn></apply></apply></apply></annotation-xml><annotation>\Rightarrow\mathcal{O}(N^{2}),</annotation><annotation>⇒ caligraphic_O ( italic_N start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT ) ,</annotation></semantics></math></td>
+<td></td>
+</tr></tbody>
+</table>
+<p>the model, similar to latent Transformers <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib59" title="">59</a>]</cite>, restricts this to <math alttext="N\times L"><semantics><mrow><mi>N</mi><mo>×</mo><mi>L</mi></mrow><annotation-xml><apply><times></times><ci>𝑁</ci><ci>𝐿</ci></apply></annotation-xml><annotation>N\times L</annotation><annotation>italic_N × italic_L</annotation></semantics></math> interactions where <span>L</span>
+is a small fraction of the input length <span>N</span>,</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\Rightarrow\mathcal{O}(N\cdot L)\approx\mathcal{O}(N)"><semantics><mrow><mi></mi><mo>⇒</mo><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mi>N</mi><mo>⋅</mo><mi>L</mi></mrow><mo>)</mo></mrow></mrow><mo>≈</mo><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><mi>N</mi><mo>)</mo></mrow></mrow></mrow><annotation-xml><apply><and></and><apply><ci>⇒</ci><csymbol>absent</csymbol><apply><times></times><ci>𝒪</ci><apply><ci>⋅</ci><ci>𝑁</ci><ci>𝐿</ci></apply></apply></apply><apply><approx></approx><share href="https://arxiv.org/html/2505.06257v1#S4.Ex4.m1.2.2.1.cmml"></share><apply><times></times><ci>𝒪</ci><ci>𝑁</ci></apply></apply></apply></annotation-xml><annotation>\Rightarrow\mathcal{O}(N\cdot L)\approx\mathcal{O}(N)</annotation><annotation>⇒ caligraphic_O ( italic_N ⋅ italic_L ) ≈ caligraphic_O ( italic_N )</annotation></semantics></math></td>
+<td></td>
+</tr></tbody>
+</table>
+<p>The element-wise operations in triadic modulation loops are significantly less expensive than matrix multiplications and lower than that of the FF residual network used in standard Transformer blocks, which <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> does not require. <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> scales linearly with input length, in contrast to the quadratic scaling in standard Transformers. For more explicit complexity analysis, the dominant MAC (multiply–accumulate) operations in standard Transformer model are approximated as:</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\textbf{MACs}_{\text{standard}}\approx L\Big{(}\,P\,E^{2}+\,P^{2}\,E\Big{)}"><semantics><mrow><msub><mtext>MACs</mtext><mtext>standard</mtext></msub><mo>≈</mo><mrow><mi>L</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mrow><mi>P</mi><mo>⁢</mo><msup><mi>E</mi><mn>2</mn></msup></mrow><mo>+</mo><mrow><msup><mi>P</mi><mn>2</mn></msup><mo>⁢</mo><mi>E</mi></mrow></mrow><mo>)</mo></mrow></mrow></mrow><annotation-xml><apply><approx></approx><apply><csymbol>subscript</csymbol><ci><mtext>MACs</mtext></ci><ci><mtext>standard</mtext></ci></apply><apply><times></times><ci>𝐿</ci><apply><plus></plus><apply><times></times><ci>𝑃</ci><apply><csymbol>superscript</csymbol><ci>𝐸</ci><cn>2</cn></apply></apply><apply><times></times><apply><csymbol>superscript</csymbol><ci>𝑃</ci><cn>2</cn></apply><ci>𝐸</ci></apply></apply></apply></apply></annotation-xml><annotation>\textbf{MACs}_{\text{standard}}\approx L\Big{(}\,P\,E^{2}+\,P^{2}\,E\Big{)}</annotation><annotation>MACs start_POSTSUBSCRIPT standard end_POSTSUBSCRIPT ≈ italic_L ( italic_P italic_E start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT + italic_P start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT italic_E )</annotation></semantics></math></td>
+<td></td>
+</tr></tbody>
+</table>
+<p>Where <math alttext="E"><semantics><mi>E</mi><annotation-xml><ci>𝐸</ci></annotation-xml><annotation>E</annotation><annotation>italic_E</annotation></semantics></math>, <math alttext="P"><semantics><mi>P</mi><annotation-xml><ci>𝑃</ci></annotation-xml><annotation>P</annotation><annotation>italic_P</annotation></semantics></math>, and <math alttext="L"><semantics><mi>L</mi><annotation-xml><ci>𝐿</ci></annotation-xml><annotation>L</annotation><annotation>italic_L</annotation></semantics></math> represent the embedding dimension, number of tokens (or patches), and the number of layers, respectively. The term <math alttext="\,P\,E^{2}"><semantics><mrow><mi>P</mi><mo>⁢</mo><msup><mi>E</mi><mn>2</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝑃</ci><apply><csymbol>superscript</csymbol><ci>𝐸</ci><cn>2</cn></apply></apply></annotation-xml><annotation>\,P\,E^{2}</annotation><annotation>italic_P italic_E start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT</annotation></semantics></math> represents the cost of the Q, K, V projections plus the FF network. The term <math alttext="\,P^{2}\,E"><semantics><mrow><msup><mi>P</mi><mn>2</mn></msup><mo>⁢</mo><mi>E</mi></mrow><annotation-xml><apply><times></times><apply><csymbol>superscript</csymbol><ci>𝑃</ci><cn>2</cn></apply><ci>𝐸</ci></apply></annotation-xml><annotation>\,P^{2}\,E</annotation><annotation>italic_P start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT italic_E</annotation></semantics></math> is due to the self–attention mechanism, which scales quadratically with <math alttext="P"><semantics><mi>P</mi><annotation-xml><ci>𝑃</ci></annotation-xml><annotation>P</annotation><annotation>italic_P</annotation></semantics></math>.
+<br/>For the <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> model, the dominant MAC operations are approximated as:</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="\textbf{MACs}_{\text{$Co^{4}$}}\approx L\Big{(}L_{q}\,E^{2}+\,P\,E^{2}+\,L_{q}%
+\,P\,E\Big{)}"><semantics><mrow><msub><mtext>MACs</mtext><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow></msub><mo>≈</mo><mrow><mi>L</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mrow><msub><mi>L</mi><mi>q</mi></msub><mo>⁢</mo><msup><mi>E</mi><mn>2</mn></msup></mrow><mo>+</mo><mrow><mi>P</mi><mo>⁢</mo><msup><mi>E</mi><mn>2</mn></msup></mrow><mo>+</mo><mrow><msub><mi>L</mi><mi>q</mi></msub><mo>⁢</mo><mi>P</mi><mo>⁢</mo><mi>E</mi></mrow></mrow><mo>)</mo></mrow></mrow></mrow><annotation-xml><apply><approx></approx><apply><csymbol>subscript</csymbol><ci><mtext>MACs</mtext></ci><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></apply><apply><times></times><ci>𝐿</ci><apply><plus></plus><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝐿</ci><ci>𝑞</ci></apply><apply><csymbol>superscript</csymbol><ci>𝐸</ci><cn>2</cn></apply></apply><apply><times></times><ci>𝑃</ci><apply><csymbol>superscript</csymbol><ci>𝐸</ci><cn>2</cn></apply></apply><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝐿</ci><ci>𝑞</ci></apply><ci>𝑃</ci><ci>𝐸</ci></apply></apply></apply></apply></annotation-xml><annotation>\textbf{MACs}_{\text{$Co^{4}$}}\approx L\Big{(}L_{q}\,E^{2}+\,P\,E^{2}+\,L_{q}%
+\,P\,E\Big{)}</annotation><annotation>MACs start_POSTSUBSCRIPT italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT end_POSTSUBSCRIPT ≈ italic_L ( italic_L start_POSTSUBSCRIPT italic_q end_POSTSUBSCRIPT italic_E start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT + italic_P italic_E start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT + italic_L start_POSTSUBSCRIPT italic_q end_POSTSUBSCRIPT italic_P italic_E )</annotation></semantics></math></td>
+<td></td>
+</tr></tbody>
+</table>
+<p><math alttext="L_{q}"><semantics><msub><mi>L</mi><mi>q</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐿</ci><ci>𝑞</ci></apply></annotation-xml><annotation>L_{q}</annotation><annotation>italic_L start_POSTSUBSCRIPT italic_q end_POSTSUBSCRIPT</annotation></semantics></math> represent the number of latent (query) tokens (with <math alttext="L_{q}\ll P"><semantics><mrow><msub><mi>L</mi><mi>q</mi></msub><mo>≪</mo><mi>P</mi></mrow><annotation-xml><apply><csymbol>much-less-than</csymbol><apply><csymbol>subscript</csymbol><ci>𝐿</ci><ci>𝑞</ci></apply><ci>𝑃</ci></apply></annotation-xml><annotation>L_{q}\ll P</annotation><annotation>italic_L start_POSTSUBSCRIPT italic_q end_POSTSUBSCRIPT ≪ italic_P</annotation></semantics></math>).
+<br/>The term <math alttext="L_{q}\,E^{2}"><semantics><mrow><msub><mi>L</mi><mi>q</mi></msub><mo>⁢</mo><msup><mi>E</mi><mn>2</mn></msup></mrow><annotation-xml><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝐿</ci><ci>𝑞</ci></apply><apply><csymbol>superscript</csymbol><ci>𝐸</ci><cn>2</cn></apply></apply></annotation-xml><annotation>L_{q}\,E^{2}</annotation><annotation>italic_L start_POSTSUBSCRIPT italic_q end_POSTSUBSCRIPT italic_E start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT</annotation></semantics></math> arises from projecting the <math alttext="L_{q}"><semantics><msub><mi>L</mi><mi>q</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐿</ci><ci>𝑞</ci></apply></annotation-xml><annotation>L_{q}</annotation><annotation>italic_L start_POSTSUBSCRIPT italic_q end_POSTSUBSCRIPT</annotation></semantics></math> latent queries. The term <math alttext="\,P\,E^{2}"><semantics><mrow><mi>P</mi><mo>⁢</mo><msup><mi>E</mi><mn>2</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝑃</ci><apply><csymbol>superscript</csymbol><ci>𝐸</ci><cn>2</cn></apply></apply></annotation-xml><annotation>\,P\,E^{2}</annotation><annotation>italic_P italic_E start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT</annotation></semantics></math> corresponds to the key and value projections. The term <math alttext="\,L_{q}\,P\,E"><semantics><mrow><msub><mi>L</mi><mi>q</mi></msub><mo>⁢</mo><mi>P</mi><mo>⁢</mo><mi>E</mi></mrow><annotation-xml><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝐿</ci><ci>𝑞</ci></apply><ci>𝑃</ci><ci>𝐸</ci></apply></annotation-xml><annotation>\,L_{q}\,P\,E</annotation><annotation>italic_L start_POSTSUBSCRIPT italic_q end_POSTSUBSCRIPT italic_P italic_E</annotation></semantics></math> reflects the cost of triadic modulation loops (emulating high-level perceptual processing and wakeful thought states), which scales linearly with <math alttext="P"><semantics><mi>P</mi><annotation-xml><ci>𝑃</ci></annotation-xml><annotation>P</annotation><annotation>italic_P</annotation></semantics></math> since <math alttext="L_{q}"><semantics><msub><mi>L</mi><mi>q</mi></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐿</ci><ci>𝑞</ci></apply></annotation-xml><annotation>L_{q}</annotation><annotation>italic_L start_POSTSUBSCRIPT italic_q end_POSTSUBSCRIPT</annotation></semantics></math> is small.
+
+<br/>Overall, the standard Transformer includes a quadratic term (<math alttext="\,P^{2}\,E"><semantics><mrow><msup><mi>P</mi><mn>2</mn></msup><mo>⁢</mo><mi>E</mi></mrow><annotation-xml><apply><times></times><apply><csymbol>superscript</csymbol><ci>𝑃</ci><cn>2</cn></apply><ci>𝐸</ci></apply></annotation-xml><annotation>\,P^{2}\,E</annotation><annotation>italic_P start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT italic_E</annotation></semantics></math>), while the <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> model reduces this to a linear term (<math alttext="\,L_{q}\,P\,E"><semantics><mrow><msub><mi>L</mi><mi>q</mi></msub><mo>⁢</mo><mi>P</mi><mo>⁢</mo><mi>E</mi></mrow><annotation-xml><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝐿</ci><ci>𝑞</ci></apply><ci>𝑃</ci><ci>𝐸</ci></apply></annotation-xml><annotation>\,L_{q}\,P\,E</annotation><annotation>italic_L start_POSTSUBSCRIPT italic_q end_POSTSUBSCRIPT italic_P italic_E</annotation></semantics></math>) by using a small set of latent queries. For large <math alttext="P"><semantics><mi>P</mi><annotation-xml><ci>𝑃</ci></annotation-xml><annotation>P</annotation><annotation>italic_P</annotation></semantics></math>, the standard Transformer becomes computationally expensive due to the quadratic attention cost. The <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> model offers significant savings by leveraging a fixed, small number of latent queries, thereby reducing the computational complexity.</p>
+</div>
+</section>
+</section>
+<section>
+<h2>
+<span>5 </span>Results</h2>
+<div>
+<p>The goal of this paper is to assess the power of the standard Transformer and <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> on a few quick-to-run tests using exactly the same architecture and hyperparameters. A more detailed analysis will be detailed in a follow-on paper. For
+reinforcement learning (RL) tasks, <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> performance is compared with <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib60" title="">60</a>]</cite>. For CIFAR‑10, <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> performance is compared with the standard Transformer baseline as well as with highly optimized Compact Convolutional Transformer (CCT) both with and without convolutional (Conv) tokenization <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib61" title="">61</a>]</cite>. For natural language processing question answering, a synthetic Facebook bAbI dataset <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib62" title="">62</a>]</cite> was used and compared with the standard Transformer.
+
+<br/>In experiments, it is observed that the <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> mechanism achieves superior validation accuracy quickly using only a few attention heads and shallow layers, whereas standard Transformer architectures require a large number of iterations, attention heads, and multiple stacked layers to reach comparable performance levels.
+
+<br/>This advantage arises from <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>’s non-linear, bi-directional reasoning, which standard attention mechanisms only approximate after significant depth and width. Notably, scaling the modulatory approach with additional heads and layers yields minimal improvement, suggesting that the core dynamics of <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> are already highly expressive, even in shallow configurations.
+
+<br/>This is because Q–K–V co-adaptation embeds reasoning before the attention operation, reducing the need for iterative layer-wise refinement. In contrast, standard attention can be seen as a sequence of shallow comparisons that gradually build understanding through stacked layers and accumulated context. By comparison, <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> embeds “deep thinking” at each step, where reasoning is not deferred but baked directly into the triadic interactions, enabling more efficient and coherent inference without excessive architectural complexity.</p>
+</div>
+<section>
+<h3>
+<span>5.1 </span>Gradient Flow</h3>
+<div>
+<p><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> avoids the need for the second FF residual connection in Transformer model, which is one of the most expensive parts of a Transformer block. All results are presented without the second residual connection. <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> effectively mitigates unstable gradient flow and reduces spiking gradients, though through a different approach than the gating mechanisms in recurrent neural nets (RNNs) such as Long Short-Term Memory (LSTM) <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib63" title="">63</a>]</cite>.
+
+<br/>In gated architectures like LSTMs or GRUs, gates control the flow of information over time steps, retaining relevant signals while attenuating irrelevant noise, and prevent vanishing or exploding gradients by modulating updates to the cell state. While <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> does not use explicit gates, it achieves gradient stability through triadic modulation prior to the attention mechanism. This early modulation filters and reshapes representations, allowing gradients to propagate through contextually meaningful and disentangled pathways, rather than through raw or entangled inputs. <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> design promotes sparse, context-sensitive activation, reducing unnecessary backpropagation through irrelevant or noisy channels. 
+<br/>Moreover, the use of the asynchronous MOD function, eq (1), introduces a non-linear, saturating dynamic. It prevents spiking gradients by clipping or modulating abrupt transitions when context and signal are mismatched. Finally, because reasoning is embedded within a single attention layer, <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> reduces reliance on depth to learn relational meaning. This results in shorter gradient paths and minimizes the risk of signal degradation across multiple layers.</p>
+</div>
+<figure><img alt="Refer to caption"/>
+<figcaption><span>Figure 6: </span>Training Results: In Cart-Pole, PyBullet Ant, and CarRacing (with high dimensional visual environment [96 x 96 x 4]) tasks, <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>, with the same architecture and number of parameters, learns much faster than the Transformer and previously proposed neuro-modulatory functions (<math alttext="T_{M1}"><semantics><msub><mi>T</mi><mrow><mi>M</mi><mo>⁢</mo><mn>1</mn></mrow></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑇</ci><apply><times></times><ci>𝑀</ci><cn>1</cn></apply></apply></annotation-xml><annotation>T_{M1}</annotation><annotation>italic_T start_POSTSUBSCRIPT italic_M 1 end_POSTSUBSCRIPT</annotation></semantics></math>-<math alttext="T_{M4}"><semantics><msub><mi>T</mi><mrow><mi>M</mi><mo>⁢</mo><mn>4</mn></mrow></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑇</ci><apply><times></times><ci>𝑀</ci><cn>4</cn></apply></apply></annotation-xml><annotation>T_{M4}</annotation><annotation>italic_T start_POSTSUBSCRIPT italic_M 4 end_POSTSUBSCRIPT</annotation></semantics></math>).</figcaption>
+</figure>
+</section>
+<section>
+<h3>
+<span>5.2 </span>The Sensory Neuron as a Transformer: Permutation-Invariant Neural Networks for
+Reinforcement Learning</h3>
+<div>
+<p>Here <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> is applied to permutation-invariant (PI) neural networks (NNs) for RL <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib60" title="">60</a>]</cite>. In the multisensory RL, V and K are functions of the Sensors 1-N i.e., input <math alttext="x"><semantics><mi>x</mi><annotation-xml><ci>𝑥</ci></annotation-xml><annotation>x</annotation><annotation>italic_x</annotation></semantics></math> <math alttext="\epsilon"><semantics><mi>ϵ</mi><annotation-xml><ci>italic-ϵ</ci></annotation-xml><annotation>\epsilon</annotation><annotation>italic_ϵ</annotation></semantics></math> <math alttext="R^{N}"><semantics><msup><mi>R</mi><mi>N</mi></msup><annotation-xml><apply><csymbol>superscript</csymbol><ci>𝑅</ci><ci>𝑁</ci></apply></annotation-xml><annotation>R^{N}</annotation><annotation>italic_R start_POSTSUPERSCRIPT italic_N end_POSTSUPERSCRIPT</annotation></semantics></math> (e.g., any linear or non-linear transformations) and Q is the output of latent positional encoding. For permutation invariance, the latent Q is independent of the input <math alttext="x"><semantics><mi>x</mi><annotation-xml><ci>𝑥</ci></annotation-xml><annotation>x</annotation><annotation>italic_x</annotation></semantics></math> so that permutation <math alttext="x"><semantics><mi>x</mi><annotation-xml><ci>𝑥</ci></annotation-xml><annotation>x</annotation><annotation>italic_x</annotation></semantics></math> only affects K and V but not Q, which allows the output to be PI <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib60" title="">60</a>]</cite>. As explained comprehensively in <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib60" title="">60</a>]</cite>, the individual sensory inputs 1-N or observations <math alttext="O_{t}^{i}"><semantics><msubsup><mi>O</mi><mi>t</mi><mi>i</mi></msubsup><annotation-xml><apply><csymbol>superscript</csymbol><apply><csymbol>subscript</csymbol><ci>𝑂</ci><ci>𝑡</ci></apply><ci>𝑖</ci></apply></annotation-xml><annotation>O_{t}^{i}</annotation><annotation>italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT start_POSTSUPERSCRIPT italic_i end_POSTSUPERSCRIPT</annotation></semantics></math>, <span>i=1, 2, … N</span> along with the previous action <math alttext="a_{t-1}"><semantics><msub><mi>a</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑎</ci><apply><minus></minus><ci>𝑡</ci><cn>1</cn></apply></apply></annotation-xml><annotation>a_{t-1}</annotation><annotation>italic_a start_POSTSUBSCRIPT italic_t - 1 end_POSTSUBSCRIPT</annotation></semantics></math> passes through a NN module in an arbitrary order such that each NN has partial access to agent’s observation at time <span>t</span> and <math alttext="i^{th}"><semantics><msup><mi>i</mi><mrow><mi>t</mi><mo>⁢</mo><mi>h</mi></mrow></msup><annotation-xml><apply><csymbol>superscript</csymbol><ci>𝑖</ci><apply><times></times><ci>𝑡</ci><ci>ℎ</ci></apply></apply></annotation-xml><annotation>i^{th}</annotation><annotation>italic_i start_POSTSUPERSCRIPT italic_t italic_h end_POSTSUPERSCRIPT</annotation></semantics></math> neuron can only see the <math alttext="i^{th}"><semantics><msup><mi>i</mi><mrow><mi>t</mi><mo>⁢</mo><mi>h</mi></mrow></msup><annotation-xml><apply><csymbol>superscript</csymbol><ci>𝑖</ci><apply><times></times><ci>𝑡</ci><ci>ℎ</ci></apply></apply></annotation-xml><annotation>i^{th}</annotation><annotation>italic_i start_POSTSUPERSCRIPT italic_t italic_h end_POSTSUPERSCRIPT</annotation></semantics></math> component of the observation <math alttext="O_{t}[i]"><semantics><mrow><msub><mi>O</mi><mi>t</mi></msub><mo>⁢</mo><mrow><mo>[</mo><mi>i</mi><mo>]</mo></mrow></mrow><annotation-xml><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑂</ci><ci>𝑡</ci></apply><apply><csymbol>delimited-[]</csymbol><ci>𝑖</ci></apply></apply></annotation-xml><annotation>O_{t}[i]</annotation><annotation>italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT [ italic_i ]</annotation></semantics></math>, computing <math alttext="f_{K}(O_{t}[i]"><semantics><mrow><msub><mi>f</mi><mi>K</mi></msub><mrow><mo>(</mo><msub><mi>O</mi><mi>t</mi></msub><mrow><mo>[</mo><mi>i</mi><mo>]</mo></mrow></mrow></mrow><annotation>f_{K}(O_{t}[i]</annotation><annotation>italic_f start_POSTSUBSCRIPT italic_K end_POSTSUBSCRIPT ( italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT [ italic_i ]</annotation></semantics></math>, <math alttext="a_{t-1})"><semantics><mrow><msub><mi>a</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>)</mo></mrow><annotation>a_{t-1})</annotation><annotation>italic_a start_POSTSUBSCRIPT italic_t - 1 end_POSTSUBSCRIPT )</annotation></semantics></math> and <math alttext="f_{V}(O_{t}[i])"><semantics><mrow><msub><mi>f</mi><mi>V</mi></msub><mo>⁢</mo><mrow><mo>(</mo><mrow><msub><mi>O</mi><mi>t</mi></msub><mo>⁢</mo><mrow><mo>[</mo><mi>i</mi><mo>]</mo></mrow></mrow><mo>)</mo></mrow></mrow><annotation-xml><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑓</ci><ci>𝑉</ci></apply><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑂</ci><ci>𝑡</ci></apply><apply><csymbol>delimited-[]</csymbol><ci>𝑖</ci></apply></apply></apply></annotation-xml><annotation>f_{V}(O_{t}[i])</annotation><annotation>italic_f start_POSTSUBSCRIPT italic_V end_POSTSUBSCRIPT ( italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT [ italic_i ] )</annotation></semantics></math> explained in <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib60" title="">60</a>]</cite>. The overall operation can be described using eq (6-8):</p>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="K(O_{t},a_{t-1})=\begin{bmatrix}f_{K}(O_{t}[1],a_{t-1})\\
+...\\
+f_{K}(O_{t}[N],a_{t-1})\end{bmatrix}\in\mathbb{R}^{N\times d_{f_{K}}}"><semantics><mrow><mrow><mi>K</mi><mo>⁢</mo><mrow><mo>(</mo><msub><mi>O</mi><mi>t</mi></msub><mo>,</mo><msub><mi>a</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>)</mo></mrow></mrow><mo>=</mo><mrow><mo>[</mo><mtable><mtr><mtd><mrow><msub><mi>f</mi><mi>K</mi></msub><mo>⁢</mo><mrow><mo>(</mo><mrow><msub><mi>O</mi><mi>t</mi></msub><mo>⁢</mo><mrow><mo>[</mo><mn>1</mn><mo>]</mo></mrow></mrow><mo>,</mo><msub><mi>a</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>)</mo></mrow></mrow></mtd></mtr><mtr><mtd><mi>…</mi></mtd></mtr><mtr><mtd><mrow><msub><mi>f</mi><mi>K</mi></msub><mo>⁢</mo><mrow><mo>(</mo><mrow><msub><mi>O</mi><mi>t</mi></msub><mo>⁢</mo><mrow><mo>[</mo><mi>N</mi><mo>]</mo></mrow></mrow><mo>,</mo><msub><mi>a</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>)</mo></mrow></mrow></mtd></mtr></mtable><mo>]</mo></mrow><mo>∈</mo><msup><mi>ℝ</mi><mrow><mi>N</mi><mo>×</mo><msub><mi>d</mi><msub><mi>f</mi><mi>K</mi></msub></msub></mrow></msup></mrow><annotation-xml><apply><and></and><apply><eq></eq><apply><times></times><ci>𝐾</ci><interval><apply><csymbol>subscript</csymbol><ci>𝑂</ci><ci>𝑡</ci></apply><apply><csymbol>subscript</csymbol><ci>𝑎</ci><apply><minus></minus><ci>𝑡</ci><cn>1</cn></apply></apply></interval></apply><apply><csymbol>matrix</csymbol><matrix><matrixrow><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑓</ci><ci>𝐾</ci></apply><interval><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑂</ci><ci>𝑡</ci></apply><apply><csymbol>delimited-[]</csymbol><cn>1</cn></apply></apply><apply><csymbol>subscript</csymbol><ci>𝑎</ci><apply><minus></minus><ci>𝑡</ci><cn>1</cn></apply></apply></interval></apply></matrixrow><matrixrow><ci>…</ci></matrixrow><matrixrow><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑓</ci><ci>𝐾</ci></apply><interval><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑂</ci><ci>𝑡</ci></apply><apply><csymbol>delimited-[]</csymbol><ci>𝑁</ci></apply></apply><apply><csymbol>subscript</csymbol><ci>𝑎</ci><apply><minus></minus><ci>𝑡</ci><cn>1</cn></apply></apply></interval></apply></matrixrow></matrix></apply></apply><apply><in></in><share href="https://arxiv.org/html/2505.06257v1#S5.E6.m1.1.1.cmml"></share><apply><csymbol>superscript</csymbol><ci>ℝ</ci><apply><times></times><ci>𝑁</ci><apply><csymbol>subscript</csymbol><ci>𝑑</ci><apply><csymbol>subscript</csymbol><ci>𝑓</ci><ci>𝐾</ci></apply></apply></apply></apply></apply></apply></annotation-xml><annotation>K(O_{t},a_{t-1})=\begin{bmatrix}f_{K}(O_{t}[1],a_{t-1})\\
+...\\
+f_{K}(O_{t}[N],a_{t-1})\end{bmatrix}\in\mathbb{R}^{N\times d_{f_{K}}}</annotation><annotation>italic_K ( italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT , italic_a start_POSTSUBSCRIPT italic_t - 1 end_POSTSUBSCRIPT ) = [ start_ARG start_ROW start_CELL italic_f start_POSTSUBSCRIPT italic_K end_POSTSUBSCRIPT ( italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT [ 1 ] , italic_a start_POSTSUBSCRIPT italic_t - 1 end_POSTSUBSCRIPT ) end_CELL end_ROW start_ROW start_CELL … end_CELL end_ROW start_ROW start_CELL italic_f start_POSTSUBSCRIPT italic_K end_POSTSUBSCRIPT ( italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT [ italic_N ] , italic_a start_POSTSUBSCRIPT italic_t - 1 end_POSTSUBSCRIPT ) end_CELL end_ROW end_ARG ] ∈ blackboard_R start_POSTSUPERSCRIPT italic_N × italic_d start_POSTSUBSCRIPT italic_f start_POSTSUBSCRIPT italic_K end_POSTSUBSCRIPT end_POSTSUBSCRIPT end_POSTSUPERSCRIPT</annotation></semantics></math></td>
+<td></td>
+<td><span>(6)</span></td>
+</tr></tbody>
+</table>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="V(O_{t})=\begin{bmatrix}f_{V}(O_{t}[1])\\
+...\\
+f_{V}(O_{t}[N])\end{bmatrix}\in\mathbb{R}^{N\times d_{f_{V}}}"><semantics><mrow><mrow><mi>V</mi><mo>⁢</mo><mrow><mo>(</mo><msub><mi>O</mi><mi>t</mi></msub><mo>)</mo></mrow></mrow><mo>=</mo><mrow><mo>[</mo><mtable><mtr><mtd><mrow><msub><mi>f</mi><mi>V</mi></msub><mo>⁢</mo><mrow><mo>(</mo><mrow><msub><mi>O</mi><mi>t</mi></msub><mo>⁢</mo><mrow><mo>[</mo><mn>1</mn><mo>]</mo></mrow></mrow><mo>)</mo></mrow></mrow></mtd></mtr><mtr><mtd><mi>…</mi></mtd></mtr><mtr><mtd><mrow><msub><mi>f</mi><mi>V</mi></msub><mo>⁢</mo><mrow><mo>(</mo><mrow><msub><mi>O</mi><mi>t</mi></msub><mo>⁢</mo><mrow><mo>[</mo><mi>N</mi><mo>]</mo></mrow></mrow><mo>)</mo></mrow></mrow></mtd></mtr></mtable><mo>]</mo></mrow><mo>∈</mo><msup><mi>ℝ</mi><mrow><mi>N</mi><mo>×</mo><msub><mi>d</mi><msub><mi>f</mi><mi>V</mi></msub></msub></mrow></msup></mrow><annotation-xml><apply><and></and><apply><eq></eq><apply><times></times><ci>𝑉</ci><apply><csymbol>subscript</csymbol><ci>𝑂</ci><ci>𝑡</ci></apply></apply><apply><csymbol>matrix</csymbol><matrix><matrixrow><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑓</ci><ci>𝑉</ci></apply><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑂</ci><ci>𝑡</ci></apply><apply><csymbol>delimited-[]</csymbol><cn>1</cn></apply></apply></apply></matrixrow><matrixrow><ci>…</ci></matrixrow><matrixrow><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑓</ci><ci>𝑉</ci></apply><apply><times></times><apply><csymbol>subscript</csymbol><ci>𝑂</ci><ci>𝑡</ci></apply><apply><csymbol>delimited-[]</csymbol><ci>𝑁</ci></apply></apply></apply></matrixrow></matrix></apply></apply><apply><in></in><share href="https://arxiv.org/html/2505.06257v1#S5.E7.m1.1.1.cmml"></share><apply><csymbol>superscript</csymbol><ci>ℝ</ci><apply><times></times><ci>𝑁</ci><apply><csymbol>subscript</csymbol><ci>𝑑</ci><apply><csymbol>subscript</csymbol><ci>𝑓</ci><ci>𝑉</ci></apply></apply></apply></apply></apply></apply></annotation-xml><annotation>V(O_{t})=\begin{bmatrix}f_{V}(O_{t}[1])\\
+...\\
+f_{V}(O_{t}[N])\end{bmatrix}\in\mathbb{R}^{N\times d_{f_{V}}}</annotation><annotation>italic_V ( italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT ) = [ start_ARG start_ROW start_CELL italic_f start_POSTSUBSCRIPT italic_V end_POSTSUBSCRIPT ( italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT [ 1 ] ) end_CELL end_ROW start_ROW start_CELL … end_CELL end_ROW start_ROW start_CELL italic_f start_POSTSUBSCRIPT italic_V end_POSTSUBSCRIPT ( italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT [ italic_N ] ) end_CELL end_ROW end_ARG ] ∈ blackboard_R start_POSTSUPERSCRIPT italic_N × italic_d start_POSTSUBSCRIPT italic_f start_POSTSUBSCRIPT italic_V end_POSTSUBSCRIPT end_POSTSUBSCRIPT end_POSTSUPERSCRIPT</annotation></semantics></math></td>
+<td></td>
+<td><span>(7)</span></td>
+</tr></tbody>
+</table>
+<table>
+<tbody><tr>
+<td></td>
+<td><math alttext="m_{t}=ReLU6(R(O_{t},a_{t-1})^{2}+\\
+2R(O_{t},a_{t-1})+C(1+|R(O_{t},a_{t-1}))|)"><semantics><mtable><mtr><mtd><mrow><msub><mi>m</mi><mi>t</mi></msub><mo>=</mo><mi>R</mi><mi>e</mi><mi>L</mi><mi>U</mi><mn>6</mn><mrow><mo>(</mo><mi>R</mi><msup><mrow><mo>(</mo><msub><mi>O</mi><mi>t</mi></msub><mo>,</mo><msub><mi>a</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>)</mo></mrow><mn>2</mn></msup><mo>+</mo></mrow></mrow></mtd></mtr><mtr><mtd><mrow><mn>2</mn><mi>R</mi><mrow><mo>(</mo><msub><mi>O</mi><mi>t</mi></msub><mo>,</mo><msub><mi>a</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>)</mo></mrow><mo>+</mo><mi>C</mi><mrow><mo>(</mo><mn>1</mn><mo>+</mo><mo>|</mo><mi>R</mi><mrow><mo>(</mo><msub><mi>O</mi><mi>t</mi></msub><mo>,</mo><msub><mi>a</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>)</mo></mrow><mo>)</mo></mrow><mo>|</mo><mo>)</mo></mrow></mtd></mtr></mtable><annotation>m_{t}=ReLU6(R(O_{t},a_{t-1})^{2}+\\
+2R(O_{t},a_{t-1})+C(1+|R(O_{t},a_{t-1}))|)</annotation><annotation>start_ROW start_CELL italic_m start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT = italic_R italic_e italic_L italic_U 6 ( italic_R ( italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT , italic_a start_POSTSUBSCRIPT italic_t - 1 end_POSTSUBSCRIPT ) start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT + end_CELL end_ROW start_ROW start_CELL 2 italic_R ( italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT , italic_a start_POSTSUBSCRIPT italic_t - 1 end_POSTSUBSCRIPT ) + italic_C ( 1 + | italic_R ( italic_O start_POSTSUBSCRIPT italic_t end_POSTSUBSCRIPT , italic_a start_POSTSUBSCRIPT italic_t - 1 end_POSTSUBSCRIPT ) ) | ) end_CELL end_ROW</annotation></semantics></math></td>
+<td></td>
+<td><span>(8)</span></td>
+</tr></tbody>
+</table>
+<p>The architectures of the policy networks, training methods, attention neuron layers, and hyperparameters in all agents are the same as used in <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib60" title="">60</a>]</cite>. The results presented in Figure 6 were generated using the code provided in <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib60" title="">60</a>]</cite>, which also serves as the baseline.
+<br/>It was observed that the <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>-driven agent learned the tasks much more quickly than the state-of-the-art Transformer-based PI agents (baseline). Furthermore, the previously proposed context-sensitive neuromodulation transfer functions (2-5) performed comparably to the baseline Transformer model. In the Cart-pole problem, the <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>-Transformer converged to the highest fitness score, exceeding 600 in 22 episodes. In contrast, the baseline learned much more slowly, reaching a fitness score of 100 in 22 episodes and remaining below 200 in 1K episodes. In the PyBullet Ant problem, the <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>-Transformer learned even faster, surpassing 700 in 1K episodes, while the baseline and other <math alttext="T_{Ms}"><semantics><msub><mi>T</mi><mrow><mi>M</mi><mo>⁢</mo><mi>s</mi></mrow></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑇</ci><apply><times></times><ci>𝑀</ci><ci>𝑠</ci></apply></apply></annotation-xml><annotation>T_{Ms}</annotation><annotation>italic_T start_POSTSUBSCRIPT italic_M italic_s end_POSTSUBSCRIPT</annotation></semantics></math> never crossed a fitness score of 100.
+<br/>Testing results for Cart-pole in Table 1 show that the <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> trained over 1K-10K episodes achieved significantly higher fitness scores with much less standard deviation, both in shuffled and unshuffled scenarios. Although for shuffled inputs, the <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> performed comparably to the baseline in 1K episodes, it quickly achieved a higher fitness score with less standard deviation in 5K episodes. However, in the PyBullet Ant case (Table 2), the <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> outperformed in both shuffled and unshuffled scenarios all the time. 
+<br/>The car racing task with high dimensional visual environment [96 x 96 x 4] showed similar behavior with different seeds. For example, in fewer than 150 episodes, <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> reached a score of 800, while the standard Transformer only achieved a score of nearly 600 after 550 episodes (Figure 6 (bottom right)).</p>
+</div>
+<figure>
+<figcaption><span>Table 1: </span>CartPole Test Performance (trained over 1K, 5K, and 10K iterations). Each value reports the average score <math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math> standard deviation across 1K test episodes.</figcaption>
+<div><span>
+<table>
+<thead>
+<tr>
+<th><span>Model</span></th>
+<th><span>1K</span></th>
+<th><span>5K</span></th>
+<th><span>10K</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>Transformer</th>
+<td>279<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>272</td>
+<td>340<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>308</td>
+<td>340<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>310</td>
+</tr>
+<tr>
+<th>Transformer (Shuffled)</th>
+<td>279<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>274</td>
+<td>339<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>308</td>
+<td>340<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>309</td>
+</tr>
+<tr>
+<th><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math></th>
+<td>428<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>293</td>
+<td>524<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>408</td>
+<td>538<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>419</td>
+</tr>
+<tr>
+<th>
+<math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> (Shuffled)</th>
+<td>267<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>248</td>
+<td>508<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>408</td>
+<td>536<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>417</td>
+</tr>
+</tbody>
+</table>
+</span></div>
+</figure>
+<figure>
+<figcaption><span>Table 2: </span>PyBullet Ant Test Performance (trained over 1K episodes). Each value reports the average score <math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math> standard deviation across 1K test episodes.</figcaption>
+<div><span>
+<table>
+<thead>
+<tr>
+<th><span>Model</span></th>
+<th><span>ES</span></th>
+<th><span>ES (Shuffled)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>Transformer</th>
+<td>121<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>53</td>
+<td>30<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>241</td>
+</tr>
+<tr>
+<th><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math></th>
+<td>1170<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>35</td>
+<td>280<math alttext="\pm"><semantics><mo>±</mo><annotation-xml><csymbol>plus-or-minus</csymbol></annotation-xml><annotation>\pm</annotation><annotation>±</annotation></semantics></math>124</td>
+</tr>
+</tbody>
+</table>
+</span></div>
+</figure>
+<figure><img alt="Refer to caption"/>
+<figcaption><span>Figure 7: </span>CIFAR-10 Training Results: In all tested configurations, <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>, with the same architecture and number of parameters, learns much faster than the Transformer.</figcaption>
+</figure>
+<figure><img alt="Refer to caption"/>
+<figcaption><span>Figure 8: </span>Synthetic dataset similar to Facebook’s bAbI dataset <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib64" title="">64</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib62" title="">62</a>]</cite>.</figcaption>
+</figure>
+<figure><img alt="Refer to caption"/>
+<figcaption><span>Figure 9: </span>Synthetic Facebook bAbI Training Results: In all tested configurations, <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>, with the same architecture and number of parameters, learns much faster than the Transformer.</figcaption>
+</figure>
+</section>
+<section>
+<h3>
+<span>5.3 </span>Image Classification: CIFAR-10</h3>
+<div>
+<p>For CIFAR-10, three transformer-based architectures, standard Transformer, CCT with Convolutional tokenizer <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib61" title="">61</a>]</cite>, and <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>-Transformer, were tested. CCT is shown to avoid overfitting and outperform state-of-the-art CNNs on small datasets. It is 10x smaller than other transformers and is 15% the size of ResNet50 <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib61" title="">61</a>]</cite>. 
+<br/>The dataset was split into 80% training and 20% validation, with a batch size of 64 and a patch size of 4 to generate non-overlapping image patches. Data augmentation techniques were applied to improve generalization. Each model uses an embedding dimension of 256 and varies in terms of the number of transformer layers, latent vectors, and attention heads. The patch embedding module converts each flattened image patch into a learned embedding through a linear transformation, followed by a ReLU activation and dropout to mitigate overfitting. In <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>, learnable latent vectors were introduced. These vectors are repeated to match the batch size and interact with the patch embeddings via attention mechanisms. For each standard transformer layer, separate linear projections were used for the queries, keys, and values. Each layer employs a single layer normalization module (norm1) to support residual connection after attention. Finally, a fully connected layer maps the final output to the number of target classes. For multi-head attention, the query, key, and value tensors are reshaped to accommodate multiple heads, enabling parallel attention computations.
+<br/>For <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>, <math alttext="K_{mod}"><semantics><msub><mi>K</mi><mrow><mi>m</mi><mo>⁢</mo><mi>o</mi><mo>⁢</mo><mi>d</mi></mrow></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝐾</ci><apply><times></times><ci>𝑚</ci><ci>𝑜</ci><ci>𝑑</ci></apply></apply></annotation-xml><annotation>K_{mod}</annotation><annotation>italic_K start_POSTSUBSCRIPT italic_m italic_o italic_d end_POSTSUBSCRIPT</annotation></semantics></math>, <math alttext="Q_{mod}"><semantics><msub><mi>Q</mi><mrow><mi>m</mi><mo>⁢</mo><mi>o</mi><mo>⁢</mo><mi>d</mi></mrow></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑄</ci><apply><times></times><ci>𝑚</ci><ci>𝑜</ci><ci>𝑑</ci></apply></apply></annotation-xml><annotation>Q_{mod}</annotation><annotation>italic_Q start_POSTSUBSCRIPT italic_m italic_o italic_d end_POSTSUBSCRIPT</annotation></semantics></math>, and <math alttext="V_{mod}"><semantics><msub><mi>V</mi><mrow><mi>m</mi><mo>⁢</mo><mi>o</mi><mo>⁢</mo><mi>d</mi></mrow></msub><annotation-xml><apply><csymbol>subscript</csymbol><ci>𝑉</ci><apply><times></times><ci>𝑚</ci><ci>𝑜</ci><ci>𝑑</ci></apply></apply></annotation-xml><annotation>V_{mod}</annotation><annotation>italic_V start_POSTSUBSCRIPT italic_m italic_o italic_d end_POSTSUBSCRIPT</annotation></semantics></math> were modified using MOD functions. Standard attention scores were computed using the dot product of queries and keys, scaled by the head dimension. Softmax was applied to obtain attention weights, and the weighted sum of values was computed. For residual connection and normalization, the attended output was added to the original latent vectors, and layer normalization is applied. For training, evaluation, and inference, the AdamW optimizer was used with weight decay for regularization. The learning rate schedulers Cosine Annealing and ReduceLROnPlateau were employed.</p>
+</div>
+<figure>
+<figcaption><span>Table 3: </span>Validation accuracy (%) on CIFAR-10 (100 epochs) is shown for different numbers of attention heads (H) and layers (L). All Transformer configurations, including CCT, have a complexity of <math alttext="\mathcal{O}(N^{2})"><semantics><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><msup><mi>N</mi><mn>2</mn></msup><mo>)</mo></mrow></mrow><annotation-xml><apply><times></times><ci>𝒪</ci><apply><csymbol>superscript</csymbol><ci>𝑁</ci><cn>2</cn></apply></apply></annotation-xml><annotation>\mathcal{O}(N^{2})</annotation><annotation>caligraphic_O ( italic_N start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT )</annotation></semantics></math>, while <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> has a complexity of <math alttext="\mathcal{O}(8\times N)"><semantics><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mn>8</mn><mo>×</mo><mi>N</mi></mrow><mo>)</mo></mrow></mrow><annotation-xml><apply><times></times><ci>𝒪</ci><apply><times></times><cn>8</cn><ci>𝑁</ci></apply></apply></annotation-xml><annotation>\mathcal{O}(8\times N)</annotation><annotation>caligraphic_O ( 8 × italic_N )</annotation></semantics></math>, where <math alttext="N=64"><semantics><mrow><mi>N</mi><mo>=</mo><mn>64</mn></mrow><annotation-xml><apply><eq></eq><ci>𝑁</ci><cn>64</cn></apply></annotation-xml><annotation>N=64</annotation><annotation>italic_N = 64</annotation></semantics></math>.</figcaption>
+<table>
+<thead>
+<tr>
+<th><span>Model</span></th>
+<th><span>H</span></th>
+<th><span>L</span></th>
+<th><span>Params (M)</span></th>
+<th><span>Accuracy (%)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span>Transformer</span></td>
+<td><span>1</span></td>
+<td><span>1</span></td>
+<td><span>0.215</span></td>
+<td><span>56</span></td>
+</tr>
+<tr>
+<td><span>Transformer</span></td>
+<td><span>1</span></td>
+<td><span>3</span></td>
+<td><span>0.61</span></td>
+<td><span>52</span></td>
+</tr>
+<tr>
+<td><span>Transformer</span></td>
+<td><span>1</span></td>
+<td><span>6</span></td>
+<td><span>1.20</span></td>
+<td><span>26</span></td>
+</tr>
+<tr>
+<td><span>Transformer</span></td>
+<td><span>4</span></td>
+<td><span>6</span></td>
+<td><span>1.20</span></td>
+<td><span>54</span></td>
+</tr>
+<tr>
+<td>
+<span>CCT 7 </span><cite><span>[</span><a href="https://arxiv.org/html/2505.06257v1#bib.bib61" title="">61</a><span>]</span></cite>
+</td>
+<td><span>4</span></td>
+<td><span>9</span></td>
+<td><span>4.7</span></td>
+<td><span>77</span></td>
+</tr>
+<tr>
+<td>
+<span>CCT 7-Conv </span><cite><span>[</span><a href="https://arxiv.org/html/2505.06257v1#bib.bib61" title="">61</a><span>]</span></cite>
+</td>
+<td><span>4</span></td>
+<td><span>9</span></td>
+<td><span>4.9</span></td>
+<td><span>82</span></td>
+</tr>
+<tr>
+<td><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math></td>
+<td><span>1</span></td>
+<td><span>1</span></td>
+<td><span>0.215</span></td>
+<td><span>65</span></td>
+</tr>
+<tr>
+<td><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math></td>
+<td><span>1</span></td>
+<td><span>3</span></td>
+<td><span>0.61</span></td>
+<td><span>76</span></td>
+</tr>
+<tr>
+<td><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math></td>
+<td><span>1</span></td>
+<td><span>6</span></td>
+<td><span>1.20</span></td>
+<td><span>81</span></td>
+</tr>
+<tr>
+<td><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math></td>
+<td><span>4</span></td>
+<td><span>6</span></td>
+<td><span>1.20</span></td>
+<td><span>80</span></td>
+</tr>
+</tbody>
+</table>
+</figure>
+<div>
+<p>Figure 7 and Table 3 present a comparative summary of the results for the 100-epochs setup, as part of quick-to-run tests to demonstrate proof of concept. Standard Transformer performance is relatively low, with accuracies between 26% and 56%, even with increased parameters. <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> outperforms the Transformer across all configurations, reaching up to 81% accuracy with 8 latent tokens and an attention matrix of size (8 x N). <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> benefits more from increased depth (L) and attention heads (H), suggesting better capacity to learn complex visual patterns better than Transformer. CCT with and without Conv tokenization performs comparably with deeper layers and more heads.</p>
+</div>
+<figure>
+<figcaption><span>Table 4: </span>Validation accuracy (%) on the synthetic bAbI dataset (100 epochs), across different numbers of attention heads (H) and layers (L). All Transformer configurations have a complexity of <math alttext="\mathcal{O}(N^{2})"><semantics><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><msup><mi>N</mi><mn>2</mn></msup><mo>)</mo></mrow></mrow><annotation-xml><apply><times></times><ci>𝒪</ci><apply><csymbol>superscript</csymbol><ci>𝑁</ci><cn>2</cn></apply></apply></annotation-xml><annotation>\mathcal{O}(N^{2})</annotation><annotation>caligraphic_O ( italic_N start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT )</annotation></semantics></math>, while <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> has a complexity of <math alttext="\mathcal{O}(4\times N)"><semantics><mrow><mi>𝒪</mi><mo>⁢</mo><mrow><mo>(</mo><mrow><mn>4</mn><mo>×</mo><mi>N</mi></mrow><mo>)</mo></mrow></mrow><annotation-xml><apply><times></times><ci>𝒪</ci><apply><times></times><cn>4</cn><ci>𝑁</ci></apply></apply></annotation-xml><annotation>\mathcal{O}(4\times N)</annotation><annotation>caligraphic_O ( 4 × italic_N )</annotation></semantics></math>, where <math alttext="N=60"><semantics><mrow><mi>N</mi><mo>=</mo><mn>60</mn></mrow><annotation-xml><apply><eq></eq><ci>𝑁</ci><cn>60</cn></apply></annotation-xml><annotation>N=60</annotation><annotation>italic_N = 60</annotation></semantics></math></figcaption>
+<table>
+<thead>
+<tr>
+<th><span>Model</span></th>
+<th><span>H</span></th>
+<th><span>L</span></th>
+<th><span>Params (M)</span></th>
+<th><span>Accuracy (%)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span>Transformer</span></td>
+<td><span>1</span></td>
+<td><span>1</span></td>
+<td><span>0.19</span></td>
+<td><span>60</span></td>
+</tr>
+<tr>
+<td><span>Transformer</span></td>
+<td><span>1</span></td>
+<td><span>2</span></td>
+<td><span>0.19</span></td>
+<td><span>63</span></td>
+</tr>
+<tr>
+<td><span>Transformer</span></td>
+<td><span>2</span></td>
+<td><span>1</span></td>
+<td><span>–</span></td>
+<td><span>70</span></td>
+</tr>
+<tr>
+<td><span>Transformer</span></td>
+<td><span>2</span></td>
+<td><span>2</span></td>
+<td><span>0.38</span></td>
+<td><span>77 (20 ep)</span></td>
+</tr>
+<tr>
+<td><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math></td>
+<td><span>1</span></td>
+<td><span>1</span></td>
+<td><span>0.19</span></td>
+<td><span>84</span></td>
+</tr>
+<tr>
+<td><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math></td>
+<td><span>1</span></td>
+<td><span>2</span></td>
+<td><span>0.19</span></td>
+<td><span>96</span></td>
+</tr>
+<tr>
+<td><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math></td>
+<td><span>2</span></td>
+<td><span>1</span></td>
+<td><span>–</span></td>
+<td><span>81</span></td>
+</tr>
+<tr>
+<td><math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math></td>
+<td><span>2</span></td>
+<td><span>2</span></td>
+<td><span>0.38</span></td>
+<td><span>98</span></td>
+</tr>
+</tbody>
+</table>
+</figure>
+</section>
+<section>
+<h3>
+<span>5.4 </span>Natural Language Processing: Synthetic Facebook bABi dataset</h3>
+<div>
+<p>Figure 8 depicts a synthetic dataset, similar to Facebook’s bAbI dataset <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib64" title="">64</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib62" title="">62</a>]</cite>, used to test <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> on NLP tasks. Synthetic stories, inspired by the bAbI tasks, were generated to evaluate both reasoning and language understanding. Each example consists of a series of events that can be either location-related (e.g., “Mary moved to the kitchen”) or distractor sentences (unrelated sentences). For each story, one event is designated as the target event: a target person is chosen, and at a random position in the story, an event is generated involving that person moving to a target place. Consequently, a corresponding question is generated (e.g., “Where is Mary?”) with the target place as the answer. 
+<br/>The same models used for computer vision were employed except CCT. Basic tokenization and vocabulary construction are applied to process the text. The AdamW optimizer with weight decay for regularization is employed for optimization, and cross-entropy is used as the loss function. A set of random examples is selected to display the original stories, questions, true answers, and the predictions from the trained model. Finally, the overall performance is quantified using the Macro F1 Score.
+<br/>Figure 9 and Table 4 present a comparative summary of the results for the 100-epochs setup. Transformer shows modest performance overall, with accuracies ranging from 60% to 77%. Adding layers (L=2) or heads (H=2) does not consistently improve performance for the Transformer. <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> significantly outperforms the standard Transformer, achieving up to 98% accuracy, especially when using more attention heads or layers. This suggests that <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math> benefits more from deeper or more complex attention configurations in NLP, indicating better scalability or inductive bias.</p>
+</div>
+</section>
+</section>
+<section>
+<h2>
+<span>6 </span>Conclusion</h2>
+<div>
+<p>The initial evidence presented here is one of many reasons to believe that emulating the cellular foundations of higher mental states, ranging from high-level perceptual processing to deep, deliberate imaginative reasoning, could be a step toward cognitively meaningful machine intelligence. This approach opens the door not only to implementing large numbers of lightweight, inference-efficient AI modules, but also to moving these systems beyond mere information processing toward contextual reasoning, shifting from raw efficiency to real understanding. This represents a philosophical shift in how models might interpret reality.
+<br/>A fundamental question that warrants further exploration is whether these cellular mechanisms can deepen our understanding of common sense and imaginative reasoning in higher mammals, and whether this can inform the design of future AI systems that are ethical, efficient, and effective. While the development of human-like AI raises important ethical considerations, the evidence presented here suggests that human imagination is deeply rooted in cooperative neural processes, reflecting a democratic, empowering dynamic shaped by evolution <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib65" title="">65</a>, <a href="https://arxiv.org/html/2505.06257v1#bib.bib6" title="">6</a>]</cite>.
+<br/>Overall, these cellular mechanisms have the potential to advance the field beyond conventional AI toward real understanding, with implications that extend well beyond current expectations. For instance, they may enable us to unlock the computational potential underlying the fundamental principles of the highest forms of conscious life. While humans may or may not attain this level of consciousness and computational capacity due to inherent physical limitations, machines could emulate these processes and help us uncover new dimensions of consciousness, deepening our connection with creation and advancing human progress.
+<br/>Future work will involve extensive evaluation and testing of <math alttext="Co^{4}"><semantics><mrow><mi>C</mi><mo>⁢</mo><msup><mi>o</mi><mn>4</mn></msup></mrow><annotation-xml><apply><times></times><ci>𝐶</ci><apply><csymbol>superscript</csymbol><ci>𝑜</ci><cn>4</cn></apply></apply></annotation-xml><annotation>Co^{4}</annotation><annotation>italic_C italic_o start_POSTSUPERSCRIPT 4 end_POSTSUPERSCRIPT</annotation></semantics></math>’s performance on large-scale AI tasks, particularly in the context of Large Language Models (LLMs).</p>
+</div>
+</section>
+<section>
+<h2>
+<span>7 </span>Acknowledgments</h2>
+<div>
+<p>Advanced Research + Invention Agency (ARIA): Nature Computes Better Opportunity seeds. Cooperation is All You Need <cite>[<a href="https://arxiv.org/html/2505.06257v1#bib.bib66" title="">66</a>]</cite> Team. Professor Bill Phillips, Professor Leslie Smith, and Professor Bruce Graham from the University of Stirling. Professor Johan Frederik Storm (Professor in Neurophysiology) from the University of Oslo. Professor Panayiota Poirazi from IMBB-FORTH. Professor Newton Howard from Oxford Computational Neuroscience. Professor John Broome (Emeritus White’s Professor of Moral Philosophy) from Corpus Christi College, University of Oxford. Professor Peter König from the University Osnabrück. Professor Heiko Neumann from Ulm University, and several other eminent scholars for their help and support in several different ways, including reviewing this work, appreciation, and encouragement. I also acknowledge ChatGPT for its assistance with proofreading and coding support.</p>
+</div>
+<div>
+<p>An early draft of this work was presented at the European Molecular Biology Organization (EMBO) Workshop on Principles of Dendritic Function and Computation, held from 21–24 May 2024.</p>
+</div>
+<div>
+<p><span>Competing interests</span>
+AA has a provisional patent application for the algorithm used in this paper.</p>
+</div>
+</section>
+<section>
+<h2>References</h2>
+<ul>
+<li>
+<span>[1]</span>
+<span>
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin, “Attention is all you need,” <em>Advances in neural information processing systems</em>, vol. 30, 2017.
+
+</span>
+</li>
+<li>
+<span>[2]</span>
+<span>
+A. Jaegle, F. Gimeno, A. Brock, O. Vinyals, A. Zisserman, and J. Carreira, “Perceiver: General perception with iterative attention,” in <em>International conference on machine learning</em>.   PMLR, 2021, pp. 4651–4664.
+
+</span>
+</li>
+<li>
+<span>[3]</span>
+<span>
+J.-B. Alayrac, J. Donahue, P. Luc, A. Miech, I. Barr, Y. Hasson, K. Lenc, A. Mensch, K. Millican, M. Reynolds <em>et al.</em>, “Flamingo: a visual language model for few-shot learning,” <em>Advances in neural information processing systems</em>, vol. 35, pp. 23 716–23 736, 2022.
+
+</span>
+</li>
+<li>
+<span>[4]</span>
+<span>
+W. A. Phillips, T. Bachmann, W. Spratling, L. Muckli, L. Petro, and T. Zolnik, “Cellular psychology: relating cognition to context-sensitive pyramidal cells,” <em>Trends in Cognitive Sciences</em>, 2024.
+
+</span>
+</li>
+<li>
+<span>[5]</span>
+<span>
+M. E. Larkum, J. J. Zhu, and B. Sakmann, “A new cellular mechanism for coupling inputs arriving at different cortical layers,” <em>Nature</em>, vol. 398, no. 6725, pp. 338–341, 1999.
+
+</span>
+</li>
+<li>
+<span>[6]</span>
+<span>
+W. A. Phillips, <em>The Cooperative Neuron: Cellular Foundations of Mental Life</em>.   Oxford University Press, 2023.
+
+</span>
+</li>
+<li>
+<span>[7]</span>
+<span>
+M. Larkum, “A cellular mechanism for cortical associations: an organizing principle for the cerebral cortex,” <em>Trends in neurosciences</em>, vol. 36, no. 3, pp. 141–151, 2013.
+
+</span>
+</li>
+<li>
+<span>[8]</span>
+<span>
+M. E. Larkum, “Are dendrites conceptually useful?” <em>Neuroscience</em>, vol. 489, pp. 4–14, 2022.
+
+</span>
+</li>
+<li>
+<span>[9]</span>
+<span>
+B. Schuman, S. Dellal, A. Prönneke, R. Machold, and B. Rudy, “Neocortical layer 1: An elegant solution to top-down and bottom-up integration,” <em>Annual Review of Neuroscience</em>, vol. 44, no. 1, pp. 221–252, 2021, pMID: 33730511.
+
+</span>
+</li>
+<li>
+<span>[10]</span>
+<span>
+P. Poirazi and A. Papoutsi, “Illuminating dendritic function with computational models,” <em>Nature Reviews Neuroscience</em>, vol. 21, pp. 1–19, 05 2020.
+
+</span>
+</li>
+<li>
+<span>[11]</span>
+<span>
+M. E. Larkum, L. S. Petro, R. N. Sachdev, and L. Muckli, “A perspective on cortical layering and layer-spanning neuronal elements,” <em>Frontiers in neuroanatomy</em>, vol. 12, p. 56, 2018.
+
+</span>
+</li>
+<li>
+<span>[12]</span>
+<span>
+J. M. Shine, P. G. Bissett, P. T. Bell, O. Koyejo, J. H. Balsters, K. J. Gorgolewski, C. A. Moodie, and R. A. Poldrack, “The dynamics of functional brain networks: integrated network states during cognitive task performance,” <em>Neuron</em>, vol. 92, no. 2, pp. 544–554, 2016.
+
+</span>
+</li>
+<li>
+<span>[13]</span>
+<span>
+J. M. Shine, M. Breakspear, P. T. Bell, K. A. Ehgoetz Martens, R. Shine, O. Koyejo, O. Sporns, and R. A. Poldrack, “Human cognition involves the dynamic integration of neural activity and neuromodulatory systems,” <em>Nature neuroscience</em>, vol. 22, no. 2, pp. 289–296, 2019.
+
+</span>
+</li>
+<li>
+<span>[14]</span>
+<span>
+J. M. Shine, “Neuromodulatory influences on integration and segregation in the brain,” <em>Trends in cognitive sciences</em>, vol. 23, no. 7, pp. 572–583, 2019.
+
+</span>
+</li>
+<li>
+<span>[15]</span>
+<span>
+J. M. Shine, E. J. Müller, B. Munn, J. Cabral, R. J. Moran, and M. Breakspear, “Computational models link cellular mechanisms of neuromodulation to large-scale neural dynamics,” <em>Nature neuroscience</em>, vol. 24, no. 6, pp. 765–776, 2021.
+
+</span>
+</li>
+<li>
+<span>[16]</span>
+<span>
+J. M. Schulz, J. W. Kay, J. Bischofberger, and M. E. Larkum, “Gaba b receptor-mediated regulation of dendro-somatic synergy in layer 5 pyramidal neurons,” <em>Frontiers in cellular neuroscience</em>, vol. 15, p. 718413, 2021.
+
+</span>
+</li>
+<li>
+<span>[17]</span>
+<span>
+J. Aru, M. Suzuki, and M. Larkum, “Cellular mechanisms of conscious processing,” <em>Trends in Cognitive Sciences</em>, vol. 25, 10 2021.
+
+</span>
+</li>
+<li>
+<span>[18]</span>
+<span>
+J. F. Storm, P. C. Klink, J. Aru, W. Senn, R. Goebel, A. Pigorini, P. Avanzini, W. Vanduffel, P. R. Roelfsema, M. Massimini <em>et al.</em>, “An integrative, multiscale view on neural theories of consciousness,” <em>Neuron</em>, vol. 112, no. 10, pp. 1531–1552, 2024.
+
+</span>
+</li>
+<li>
+<span>[19]</span>
+<span>
+T. Marvan, M. Polák, T. Bachmann, and W. A. Phillips, “Apical amplification—a cellular mechanism of conscious perception?” <em>Neuroscience of consciousness</em>, vol. 2021, no. 2, p. niab036, 2021.
+
+</span>
+</li>
+<li>
+<span>[20]</span>
+<span>
+A. D. Nelson and K. J. Bender, “Dendritic integration dysfunction in neurodevelopmental disorders,” <em>Developmental Neuroscience</em>, vol. 43, no. 3-4, pp. 201–221, 2021.
+
+</span>
+</li>
+<li>
+<span>[21]</span>
+<span>
+A. Granato, W. A. Phillips, J. M. Schulz, M. Suzuki, and M. E. Larkum, “Dysfunctions of cellular context-sensitivity in neurodevelopmental learning disabilities,” <em>Neuroscience &amp; Biobehavioral Reviews</em>, p. 105688, 2024.
+
+</span>
+</li>
+<li>
+<span>[22]</span>
+<span>
+J. Aru, F. Siclari, W. A. Phillips, and J. F. Storm, “Apical drive—a cellular mechanism of dreaming?” <em>Neuroscience &amp; Biobehavioral Reviews</em>, vol. 119, pp. 440–455, 2020.
+
+</span>
+</li>
+<li>
+<span>[23]</span>
+<span>
+T. Bachmann, M. Suzuki, and J. Aru, “Dendritic integration theory: a thalamo-cortical theory of state and content of consciousness,” <em>Philosophy and the Mind Sciences</em>, vol. 1, no. II, 2020.
+
+</span>
+</li>
+<li>
+<span>[24]</span>
+<span>
+K. Friston, “The free-energy principle: a unified brain theory?” <em>Nature reviews neuroscience</em>, vol. 11, no. 2, pp. 127–138, 2010.
+
+</span>
+</li>
+<li>
+<span>[25]</span>
+<span>
+M. W. Spratling, “A review of predictive coding algorithms,” <em>Brain and cognition</em>, vol. 112, pp. 92–97, 2017.
+
+</span>
+</li>
+<li>
+<span>[26]</span>
+<span>
+A. M. Bastos, W. M. Usrey, R. A. Adams, G. R. Mangun, P. Fries, and K. J. Friston, “Canonical microcircuits for predictive coding,” <em>Neuron</em>, vol. 76, no. 4, pp. 695–711, 2012.
+
+</span>
+</li>
+<li>
+<span>[27]</span>
+<span>
+K. Friston, “A theory of cortical responses,” <em>Philosophical transactions of the Royal Society B: Biological sciences</em>, vol. 360, no. 1456, pp. 815–836, 2005.
+
+</span>
+</li>
+<li>
+<span>[28]</span>
+<span>
+K. J. Friston, R. Rosch, T. Parr, C. Price, and H. Bowman, “Deep temporal models and active inference,” <em>Neuroscience &amp; Biobehavioral Reviews</em>, vol. 90, pp. 486–501, 2018.
+
+</span>
+</li>
+<li>
+<span>[29]</span>
+<span>
+K. J. Friston, T. Parr, and B. de Vries, “The graphical brain: Belief propagation and active inference,” <em>Network neuroscience</em>, vol. 1, no. 4, pp. 381–414, 2017.
+
+</span>
+</li>
+<li>
+<span>[30]</span>
+<span>
+T. Marvan and W. A. Phillips, “Cellular mechanisms of cooperative context-sensitive predictive inference,” <em>Current Research in Neurobiology</em>, p. 100129, 2024.
+
+</span>
+</li>
+<li>
+<span>[31]</span>
+<span>
+A. Payeur, J. Guerguiev, F. Zenke, B. A. Richards, and R. Naud, “Burst-dependent synaptic plasticity can coordinate learning in hierarchical circuits,” <em>Nature neuroscience</em>, vol. 24, no. 7, pp. 1010–1019, 2021.
+
+</span>
+</li>
+<li>
+<span>[32]</span>
+<span>
+e. a. Greedy, Will, “Single-phase deep learning in cortico-cortical networks,” <em>Advances in Neural Information Processing Systems</em>, 2022.
+
+</span>
+</li>
+<li>
+<span>[33]</span>
+<span>
+J. Guerguiev, T. Lillicrap, and B. Richards, “Towards deep learning with segregated dendrites,” <em>eLife</em>, vol. 6, p. e22901, 12 2017.
+
+</span>
+</li>
+<li>
+<span>[34]</span>
+<span>
+J. Sacramento, R. Ponte Costa, Y. Bengio, and W. Senn, “Dendritic cortical microcircuits approximate the backpropagation algorithm,” <em>Advances in neural information processing systems</em>, vol. 31, 2018.
+
+</span>
+</li>
+<li>
+<span>[35]</span>
+<span>
+B. Illing, J. Ventura, G. Bellec, and W. Gerstner, “Local plasticity rules can learn deep representations using self-supervised contrastive predictions,” <em>Advances in Neural Information Processing Systems</em>, 2022.
+
+</span>
+</li>
+<li>
+<span>[36]</span>
+<span>
+F. Zenke, B. Poole, and S. Ganguli, “Continual learning through synaptic intelligence,” in <em>International conference on machine learning</em>.   PMLR, 2017, pp. 3987–3995.
+
+</span>
+</li>
+<li>
+<span>[37]</span>
+<span>
+J. Kirkpatrick, R. Pascanu, N. Rabinowitz, J. Veness, G. Desjardins, A. A. Rusu, K. Milan, J. Quan, T. Ramalho, A. Grabska-Barwinska <em>et al.</em>, “Overcoming catastrophic forgetting in neural networks,” <em>Proceedings of the national academy of sciences</em>, vol. 114, no. 13, pp. 3521–3526, 2017.
+
+</span>
+</li>
+<li>
+<span>[38]</span>
+<span>
+G. Kastellakis, A. J. Silva, and P. Poirazi, “Linking memories across time via neuronal and dendritic overlaps in model neurons with active dendrites,” <em>Cell reports</em>, vol. 17, no. 6, pp. 1491–1504, 2016.
+
+</span>
+</li>
+<li>
+<span>[39]</span>
+<span>
+J. Bono and C. Clopath, “Modeling somatic and dendritic spike mediated plasticity at the single neuron and network level,” <em>Nature communications</em>, vol. 8, no. 1, p. 706, 2017.
+
+</span>
+</li>
+<li>
+<span>[40]</span>
+<span>
+T. Limbacher and R. Legenstein, “Emergence of stable synaptic clusters on dendrites through synaptic rewiring,” <em>Frontiers in computational neuroscience</em>, vol. 14, p. 57, 2020.
+
+</span>
+</li>
+<li>
+<span>[41]</span>
+<span>
+J. W. Kay and W. A. Phillips, “Contextual modulation in mammalian neocortex is asymmetric,” <em>Symmetry</em>, vol. 12, no. 5, p. 815, 2020.
+
+</span>
+</li>
+<li>
+<span>[42]</span>
+<span>
+J. W. Kay, J. M. Schulz, and W. A. Phillips, “A comparison of partial information decompositions using data from real and simulated layer 5b pyramidal cells,” <em>Entropy</em>, vol. 24, no. 8, p. 1021, 2022.
+
+</span>
+</li>
+<li>
+<span>[43]</span>
+<span>
+E. Pastorelli, A. Yegenoglu, N. Kolodziej, W. Wybo, F. Simula, S. Diaz, J. F. Storm, and P. S. Paolucci, “Two-compartment neuronal spiking model expressing brain-state specific apical-amplification,-isolation and-drive regimes,” <em>arXiv preprint arXiv:2311.06074</em>, 2023.
+
+</span>
+</li>
+<li>
+<span>[44]</span>
+<span>
+B. P. Graham, J. W. Kay, and W. A. Phillips, “Transfer functions for burst firing probability in a model neocortical pyramidal cell,” <em>bioRxiv</em>, pp. 2024–01, 2024.
+
+</span>
+</li>
+<li>
+<span>[45]</span>
+<span>
+A. Adeel, A. Adetomi, K. Ahmed, A. Hussain, T. Arslan, and W. A. Phillips, “Unlocking the potential of two-point cells for energy-efficient and resilient training of deep nets,” <em>IEEE Transactions on Emerging Topics in Computational Intelligence</em>, vol. 7, no. 3, pp. 818–828, 2023.
+
+</span>
+</li>
+<li>
+<span>[46]</span>
+<span>
+L. e. a. Muckli*, “The cortical microcircuitry of predictions and context: a multi-scale perspective,” Sep. 2023. [Online]. Available: <a href="https://doi.org/10.5281/zenodo.8380094" title="">https://doi.org/10.5281/zenodo.8380094</a>
+</span>
+</li>
+<li>
+<span>[47]</span>
+<span>
+M. Raza and A. Adeel, “An overlooked role of context-sensitive dendrites,” <em>arXiv preprint arXiv:2408.11019</em>, 2024.
+
+</span>
+</li>
+<li>
+<span>[48]</span>
+<span>
+J. Shin, G. Doron, and M. Larkum, “Memories off the top of your head,” <em>Science</em>, vol. 374, pp. 538–539, 10 2021.
+
+</span>
+</li>
+<li>
+<span>[49]</span>
+<span>
+D. Kahneman, “Thinking, fast and slow,” <em>Farrar, Straus and Giroux</em>, 2011.
+
+</span>
+</li>
+<li>
+<span>[50]</span>
+<span>
+O. G. Selfridge, “Pattern recognition and modern computers,” in <em>Proceedings of the March 1-3, 1955, western joint computer conference</em>, 1955, pp. 91–93.
+
+</span>
+</li>
+<li>
+<span>[51]</span>
+<span>
+D. E. Rumelhart, J. L. McClelland, P. R. Group <em>et al.</em>, <em>Parallel distributed processing, volume 1: Explorations in the microstructure of cognition: Foundations</em>.   The MIT press, 1986.
+
+</span>
+</li>
+<li>
+<span>[52]</span>
+<span>
+J. Parnas, A. Urfer-Parnas, and H. Stephensen, “Double bookkeeping and schizophrenia spectrum: divided unified phenomenal consciousness,” <em>European Archives of Psychiatry and Clinical Neuroscience</em>, vol. 271, pp. 1513–1523, 2021.
+
+</span>
+</li>
+<li>
+<span>[53]</span>
+<span>
+J. Parnas and K. E. Sandsten, “The phenomenological nature of schizophrenia and disorder of selfhood,” <em>Schizophrenia Research</em>, vol. 270, pp. 197–201, 2024.
+
+</span>
+</li>
+<li>
+<span>[54]</span>
+<span>
+W. Blankenburg and A. L. Mishara, “First steps toward a psychopathology of” common sense”,” <em>Philosophy, psychiatry, &amp; psychology</em>, vol. 8, no. 4, pp. 303–315, 2001.
+
+</span>
+</li>
+<li>
+<span>[55]</span>
+<span>
+I. Vlaev, “Local choices: Rationality and the contextuality of decision-making,” <em>Brain sciences</em>, vol. 8, no. 1, p. 8, 2018.
+
+</span>
+</li>
+<li>
+<span>[56]</span>
+<span>
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou <em>et al.</em>, “Chain-of-thought prompting elicits reasoning in large language models,” <em>Advances in neural information processing systems</em>, vol. 35, pp. 24 824–24 837, 2022.
+
+</span>
+</li>
+<li>
+<span>[57]</span>
+<span>
+J. Kay, D. Floreano, and W. A. Phillips, “Contextually guided unsupervised learning using local multivariate binary processors,” <em>Neural Networks</em>, vol. 11, no. 1, pp. 117–140, 1998.
+
+</span>
+</li>
+<li>
+<span>[58]</span>
+<span>
+B. P. Graham, J. W. Kay, and W. A. Phillips, “Context-sensitive processing in a model neocortical pyramidal cell with two sites of input integration,” <em>Neural Computation</em>, vol. 37, no. 4, pp. 588–634, 2025.
+
+</span>
+</li>
+<li>
+<span>[59]</span>
+<span>
+X. Bi, D. Chen, G. Chen, S. Chen, D. Dai, C. Deng, H. Ding, K. Dong, Q. Du, Z. Fu <em>et al.</em>, “Deepseek llm: Scaling open-source language models with longtermism,” <em>arXiv preprint arXiv:2401.02954</em>, 2024.
+
+</span>
+</li>
+<li>
+<span>[60]</span>
+<span>
+Y. Tang and D. Ha, “The sensory neuron as a transformer: Permutation-invariant neural networks for reinforcement learning,” <em>Advances in Neural Information Processing Systems</em>, vol. 34, pp. 22 574–22 587, 2021.
+
+</span>
+</li>
+<li>
+<span>[61]</span>
+<span>
+A. Hassani, S. Walton, N. Shah, A. Abuduweili, J. Li, and H. Shi, “Escaping the big data paradigm with compact transformers,” <em>arXiv preprint arXiv:2104.05704</em>, 2021.
+
+</span>
+</li>
+<li>
+<span>[62]</span>
+<span>
+J. Weston, A. Bordes, S. Chopra, A. M. Rush, B. Van Merriënboer, A. Joulin, and T. Mikolov, “Towards ai-complete question answering: A set of prerequisite toy tasks,” <em>arXiv preprint arXiv:1502.05698</em>, 2015.
+
+</span>
+</li>
+<li>
+<span>[63]</span>
+<span>
+S. Hochreiter and J. Schmidhuber, “Long short-term memory,” <em>Neural computation</em>, vol. 9, no. 8, pp. 1735–1780, 1997.
+
+</span>
+</li>
+<li>
+<span>[64]</span>
+<span>
+J. Weston, S. Chopra, and A. Bordes, “Memory networks,” <em>arXiv preprint arXiv:1410.3916</em>, 2014.
+
+</span>
+</li>
+<li>
+<span>[65]</span>
+<span>
+R. Bregman, <em>Humankind: A hopeful history</em>.   Bloomsbury Publishing, 2020.
+
+</span>
+</li>
+<li>
+<span>[66]</span>
+<span>
+A. Adeel, J. Muzaffar, K. Ahmed, and M. Raza, “Cooperation is all you need,” <em>arXiv preprint arXiv:2305.10449</em>, 2023.
+
+</span>
+</li>
+</ul>
+</section>
+<div></div>
+<div></div>
+</article>
+</div>
+
+</div>
+</body>
+</html>
