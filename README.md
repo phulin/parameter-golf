@@ -1,3 +1,11 @@
+# Patrick's Parameter Golf Entries
+
+This is my working branch for the OpenAI Parameter Golf Challenge. I've tried a number of things, based on the papers in this repo and others. I have been focused on finding alternative architectures rather than microoptimizing a standard Transformer stack.
+* Recursive approaches: [Universal Transformer](https://arxiv.org/abs/1807.03819), [DREAMER](https://arxiv.org/abs/2601.21582), [Test-Time Compute with Latent Reasoning](https://arxiv.org/abs/2502.05171) (see [train_recursive.py]), [Looped Transformer](https://arxiv.org/abs/2409.15647) (see [train_gpt.py]), Deep Equilibrium (using [TorchDEQ](https://arxiv.org/abs/2310.18605))
+* Hybrid models: Striped GatedDeltaNet/Transformer, [Gated DeltaNet](https://arxiv.org/abs/2412.06464) using the conclusions from [Mechanistic Architecture Design](https://arxiv.org/abs/2403.17844) (see [train_hybrid.py]), [Griffin](https://arxiv.org/abs/2403.17844) (see [train_griffin.py])
+
+# Original README
+
 <img width="3840" height="1280" alt="1920x640-discord" src="https://github.com/user-attachments/assets/90607b26-171f-476a-90ae-69b9dbb7cb30" />
 
 <br>
