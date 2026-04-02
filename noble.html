@@ -1,0 +1,3396 @@
+<!DOCTYPE html>
+<html>
+
+<body>
+  <div>
+    <div>
+      <a href="https://info.arxiv.org/help/license/index.html#licenses-available">
+        License: CC BY 4.0
+      </a>
+      <div>
+        arXiv:2603.06492v1 [cs.LG] 06 Mar 2026</div>
+    </div>
+    <div>
+      <article>
+        <h1>NOBLE: Accelerating Transformers with
+          <br />Nonlinear Low-Rank Branches
+        </h1>
+        <div>
+          <span>
+            <span>Ethan Smith
+              <br />Canva Research
+              <br /><span>ethansmith@canva.com</span>
+            </span></span>
+        </div>
+        <div>
+          <h6>Abstract</h6>
+          <p>We introduce <span>NOBLE</span> (<span>N</span>onlinear l<span>O</span>w-rank <span>B</span>ranch for
+            <span>L</span>inear <span>E</span>nhancement), an architectural augmentation that adds nonlinear low-rank
+            branches to transformer linear layers. Unlike LoRA and other parameter-efficient fine-tuning (PEFT) methods,
+            NOBLE is designed for pretraining from scratch. The branch is a permanent part of the architecture as
+            opposed to an adapter for finetuning on top of frozen weights. The branch computes <math
+              alttext="\sigma(xW_{\text{down}})W_{\text{up}}">
+              <semantics>
+                <mrow>
+                  <mi>σ</mi>
+                  <mo>​</mo>
+                  <mrow>
+                    <mo>(</mo>
+                    <mrow>
+                      <mi>x</mi>
+                      <mo>​</mo>
+                      <msub>
+                        <mi>W</mi>
+                        <mtext>down</mtext>
+                      </msub>
+                    </mrow>
+                    <mo>)</mo>
+                  </mrow>
+                  <mo>​</mo>
+                  <msub>
+                    <mi>W</mi>
+                    <mtext>up</mtext>
+                  </msub>
+                </mrow>
+                <annotation>\sigma(xW_{\text{down}})W_{\text{up}}</annotation>
+              </semantics>
+            </math> where <math alttext="\sigma">
+              <semantics>
+                <mi>σ</mi>
+                <annotation>\sigma</annotation>
+              </semantics>
+            </math> is a learnable nonlinearity. We evaluate several activation functions and find that
+            <span>CosNet</span>, a two-layer cosine nonlinearity with learnable frequency and phase with a linear
+            projection in between them in the bottleneck space, performs best. NOBLE achieves substantial improvements
+            with minimal overhead: <span>up to 1.47<math alttext="\times">
+                <semantics>
+                  <mo>×</mo>
+                  <annotation>\times</annotation>
+                </semantics>
+              </math> step speedup</span> to reach baseline eval loss (up to 32% fewer training steps), with as low as
+            4% additional parameters and 7% step time overhead, resulting in <span>up to 1.22<math alttext="\times">
+                <semantics>
+                  <mo>×</mo>
+                  <annotation>\times</annotation>
+                </semantics>
+              </math> net wallclock speedup</span>. Experiments on LLMs (250M and 1.5B parameters), BERT, autoregressive
+            image token modeling, and ViT consistently show improved training efficiency. We identify one caveat:
+            Mixup/CutMix augmentation interferes with NOBLE’s benefits in Imagenet classification along with other
+            stochastic augmentations, but when disabled, ViT also improves. This discrepancy is possibly explained by
+            regularization techniques that encourage smoother fits to the target function while NOBLE may specialize
+            more in sharper aspects of the target function.</p>
+        </div>
+        <figure><img alt="Refer to caption" />
+          <figcaption><span>Figure 1: </span><span>Eval loss curves for 1.5B LLM pretraining on OpenWebText.</span>
+            NOBLE (solid) reaches baseline’s best loss (2.51) in 143–154k steps vs 196k (1.34–1.37<math
+              alttext="\times">
+              <semantics>
+                <mo>×</mo>
+                <annotation>\times</annotation>
+              </semantics>
+            </math> faster). First 20% of training truncated.</figcaption>
+        </figure>
+        <section>
+          <h2>
+            <span>1 </span>Introduction
+          </h2>
+          <div>
+            <p>Transformers have become the dominant architecture for both natural language
+              processing <cite>(Vaswani<span> et al.</span>, <a href="#bib.bib1"
+                  title="Attention is all you need">2017</a>; Brown<span> et al.</span>, <a href="#bib.bib3"
+                  title="Language models are few-shot learners">2020</a>)</cite> and computer
+              vision <cite>(Dosovitskiy<span> et al.</span>, <a href="#bib.bib4"
+                  title="An image is worth 16x16 words: transformers for image recognition at scale">2020</a>)</cite>.
+              Despite their success, the linear projections that make up the bulk of transformer parameters, those in
+              attention layers and feedforward networks, are fundamentally limited to computing affine transformations
+              within each layer. While nonlinearities in feedforward blocks provide expressivity, the attention
+              mechanism’s query, key, and value projections remain purely linear.</p>
+          </div>
+          <div>
+            <p>Low-Rank Adaptation (LoRA) <cite>(Hu<span> et al.</span>, <a href="#bib.bib5"
+                  title="Lora: low-rank adaptation of large language models">2021</a>)</cite> demonstrated that
+              fine-tuning large models can be achieved by learning low-rank additive updates to frozen weights. However,
+              naively applying linear LoRA to pretraining offers limited benefit: the low-rank matrices <math
+                alttext="BA">
+                <semantics>
+                  <mrow>
+                    <mi>B</mi>
+                    <mo>​</mo>
+                    <mi>A</mi>
+                  </mrow>
+                  <annotation>BA</annotation>
+                </semantics>
+              </math> can be fused into the main weight matrix <math alttext="W+BA">
+                <semantics>
+                  <mrow>
+                    <mi>W</mi>
+                    <mo>+</mo>
+                    <mrow>
+                      <mi>B</mi>
+                      <mo>​</mo>
+                      <mi>A</mi>
+                    </mrow>
+                  </mrow>
+                  <annotation>W+BA</annotation>
+                </semantics>
+              </math>, collapsing to a standard linear layer with slightly different initialization. Without a
+              nonlinearity, the “bypass” may not function as a separate computational branch but instead closer to a
+              delta to the main weights. This raises a natural question: <em>can we design low-rank branches with true
+                architectural benefits during pretraining, not just parameter-efficient fine-tuning?</em></p>
+          </div>
+          <div>
+            <p>We introduce <span>NOBLE</span> (<span>N</span>onlinear l<span>O</span>w-rank <span>B</span>ranch for
+              <span>L</span>inear <span>E</span>nhancement), a simple modification that augments linear layers with a
+              nonlinear low-rank branch. <span>Crucially, unlike LoRA and the broader family of Parameter-Efficient
+                Fine-Tuning (PEFT) methods, NOBLE is not a fine-tuning technique. It is a fundamental architectural
+                augmentation designed for pretraining from scratch.</span> The low-rank branch becomes a permanent part
+              of the model architecture, trained jointly with all other parameters from initialization.</p>
+          </div>
+          <div>
+            <p>The key insight is that a small bottleneck with a well-chosen nonlinearity can capture function
+              variations that complement the main linear pathway. We evaluate several activation functions and find that
+              cosine-based activations perform best, with our recommended variant <span>CosNet</span>, two cosine
+              nonlinearities with learnable frequency and phase along with a linear projection in between them in the
+              bottleneck space, achieving the strongest results. Our approach differs from standard LoRA in three
+              important ways:</p>
+            <ol>
+              <li>
+                <span>1.</span>
+                <div>
+                  <p><span>Architectural augmentation, not PEFT</span>: The branch is a permanent part of the
+                    architecture trained from scratch, not an adapter added to frozen weights for
+                    fine-tuning <cite>(Houlsby<span> et al.</span>, <a href="#bib.bib26"
+                        title="Parameter-efficient transfer learning for nlp">2019</a>)</cite>.</p>
+                </div>
+              </li>
+              <li>
+                <span>2.</span>
+                <div>
+                  <p><span>Nonlinear activation</span>: We evaluate several activations and recommend CosNet: two cosine
+                    nonlinearities with learnable frequency and phase, connected by a small mixing matrix.</p>
+                </div>
+              </li>
+              <li>
+                <span>3.</span>
+                <div>
+                  <p><span>Learning rate scaling</span>: We apply elevated learning rates to <math
+                      alttext="W_{\text{up}}">
+                      <semantics>
+                        <msub>
+                          <mi>W</mi>
+                          <mtext>up</mtext>
+                        </msub>
+                        <annotation>W_{\text{up}}</annotation>
+                      </semantics>
+                    </math> and <math alttext="M">
+                      <semantics>
+                        <mi>M</mi>
+                        <annotation>M</annotation>
+                      </semantics>
+                    </math> based on the ratio <math alttext="(\text{dim}/r)^{\gamma}">
+                      <semantics>
+                        <msup>
+                          <mrow>
+                            <mo>(</mo>
+                            <mrow>
+                              <mtext>dim</mtext>
+                              <mo>/</mo>
+                              <mi>r</mi>
+                            </mrow>
+                            <mo>)</mo>
+                          </mrow>
+                          <mi>γ</mi>
+                        </msup>
+                        <annotation>(\text{dim}/r)^{\gamma}</annotation>
+                      </semantics>
+                    </math>, roughly following insights from <math alttext="\mu">
+                      <semantics>
+                        <mi>μ</mi>
+                        <annotation>\mu</annotation>
+                      </semantics>
+                    </math>P <cite>(Yang<span> et al.</span>, <a href="#bib.bib2"
+                        title="Tensor programs v: tuning large neural networks via zero-shot hyperparameter transfer">2022</a>)</cite>.
+                  </p>
+                </div>
+              </li>
+            </ol>
+          </div>
+          <div>
+            <p><span>Main result: up to 1.47<math alttext="\times">
+                  <semantics>
+                    <mo>×</mo>
+                    <annotation>\times</annotation>
+                  </semantics>
+                </math> training speedup on language models.</span> Our experiments demonstrate that NOBLE dramatically
+              improves training efficiency for language models:</p>
+            <ul>
+              <li>
+                <span>•</span>
+                <div>
+                  <p><span>21–32% fewer steps</span>: Models reach baseline eval loss in up to 1.47<math
+                      alttext="\times">
+                      <semantics>
+                        <mo>×</mo>
+                        <annotation>\times</annotation>
+                      </semantics>
+                    </math> fewer training steps (e.g., 169k vs 249k steps for rank 256).</p>
+                </div>
+              </li>
+              <li>
+                <span>•</span>
+                <div>
+                  <p><span>Modest overhead</span>: 4–24% additional parameters and 7–21% longer step times.</p>
+                </div>
+              </li>
+              <li>
+                <span>•</span>
+                <div>
+                  <p><span>Net wallclock savings</span>: Despite the per-step overhead, the reduced step count yields
+                    1.17–1.22<math alttext="\times">
+                      <semantics>
+                        <mo>×</mo>
+                        <annotation>\times</annotation>
+                      </semantics>
+                    </math> wallclock speedup.</p>
+                </div>
+              </li>
+              <li>
+                <span>•</span>
+                <div>
+                  <p><span>Better final loss</span>: At convergence, NOBLE achieves 0.02–0.07 lower eval loss than
+                    baseline in the experiments we conducted.</p>
+                </div>
+              </li>
+            </ul>
+          </div>
+          <div>
+            <p>We validate these results across LLM autoregressive training at two scales (250M and 1.5B parameters),
+              110M BERT-style masked language modeling, ViT-Small ImageNet classification, and autoregressive image
+              token modeling on ImageNet, with ablations on rank (64, 128, 256).</p>
+          </div>
+          <div>
+            <p><span>Contributions</span></p>
+            <ul>
+              <li>
+                <span>•</span>
+                <div>
+                  <p>We propose NOBLE, a family of nonlinear low-rank branches for linear layer enhancement, achieving
+                    <span>up to 1.47<math alttext="\times">
+                        <semantics>
+                          <mo>×</mo>
+                          <annotation>\times</annotation>
+                        </semantics>
+                      </math> step speedup</span> and <span>1.17–1.22<math alttext="\times">
+                        <semantics>
+                          <mo>×</mo>
+                          <annotation>\times</annotation>
+                        </semantics>
+                      </math> wallclock speedup</span> on autoregressive pretraining with minimal overhead.</p>
+                </div>
+              </li>
+              <li>
+                <span>•</span>
+                <div>
+                  <p>We evaluate several activation functions and identify <span>CosNet</span>, a sandwich of a
+                    learnable cosine activation, a linear projection, and then another learnable cosine activation, as
+                    the best-performing variant.</p>
+                </div>
+              </li>
+              <li>
+                <span>•</span>
+                <div>
+                  <p>We introduce key design choices: near-zero initialization and scaled learning rates for low-rank
+                    components.</p>
+                </div>
+              </li>
+              <li>
+                <span>•</span>
+                <div>
+                  <p>We provide extensive experiments on LLMs (two scales), BERT, ViT, and autoregressive image token
+                    modeling, demonstrating broad effectiveness across tasks, with a note that aggressive augmentation
+                    (Mixup/CutMix) can interfere with NOBLE’s benefits.</p>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </section>
+        <section>
+          <h2>
+            <span>2 </span>Related Work
+          </h2>
+          <section>
+            <h5>Low-Rank Adaptation and PEFT.</h5>
+            <div>
+              <p>LoRA <cite>(Hu<span> et al.</span>, <a href="#bib.bib5"
+                    title="Lora: low-rank adaptation of large language models">2021</a>)</cite> introduced low-rank
+                updates for parameter-efficient fine-tuning (PEFT), spawning a large family of methods.
+                LoRA+ <cite>(Hayou<span> et al.</span>, <a href="#bib.bib22"
+                    title="LoRA+: efficient low rank adaptation of large models">2024</a>)</cite> showed that using
+                different learning rates for the down and up projection matrices improves fine-tuning efficiency, we
+                adopt a similar asymmetric learning rate strategy for NOBLE. DoRA <cite>(Liu<span> et al.</span>, <a
+                    href="#bib.bib8" title="Dora: weight-decomposed low-rank adaptation">2024</a>)</cite> decomposes
+                weights into magnitude and direction components. AdaLoRA <cite>(Zhang<span> et al.</span>, <a
+                    href="#bib.bib6"
+                    title="Adalora: adaptive budget allocation for parameter-efficient fine-tuning">2023</a>)</cite>
+                learns adaptive ranks, and QLoRA <cite>(Dettmers<span> et al.</span>, <a href="#bib.bib7"
+                    title="Qlora: efficient finetuning of quantized llms">2023</a>)</cite> enables fine-tuning with
+                quantized weights. MoSLoRA <cite>(Wu<span> et al.</span>, <a href="#bib.bib25"
+                    title="Mixture-of-subspaces in low-rank adaptation">2024</a>)</cite> introduces mixture-of-subspaces
+                to improve LoRA’s expressiveness. These methods share a common paradigm: freeze pretrained weights and
+                learn low-rank <em>corrections</em> for downstream tasks. NOBLE takes a fundamentally different
+                approach, rather than a fine-tuning adapter, we propose a <em>permanent architectural augmentation</em>
+                trained from scratch during pretraining.</p>
+            </div>
+          </section>
+          <section>
+            <h5>Nonlinear Extensions of LoRA.</h5>
+            <div>
+              <p>Several concurrent works have explored adding nonlinearity to LoRA for fine-tuning (see Figure <a
+                  href="#S3.F2"
+                  title="Figure 2 ‣ 3 Method ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>2</span></a>
+                for architectural comparison). NEAT <cite>(Zhong<span> et al.</span>, <a href="#bib.bib23"
+                    title="Neat: nonlinear parameter-efficient adaptation of pre-trained models">2024</a>)</cite> learns
+                a nonlinear transformation of pretrained weights to approximate cumulative updates.
+                AuroRA <cite>(Dong<span> et al.</span>, <a href="#bib.bib24"
+                    title="AuroRA: breaking low-rank bottleneck of lora with nonlinear mapping">2024</a>)</cite>
+                incorporates an Adaptive Nonlinear Layer between linear projectors to capture fixed and learnable
+                nonlinearities. These methods target the PEFT setting (fine-tuning frozen models), whereas NOBLE is
+                designed for pretraining from scratch (although given the similarity in architecture to related works,
+                it may also be used for fine-tuning as well, or possibly continued pretraining for further reduction
+                in loss). Additionally, our work identifies that cosine activations are particularly effective in
+                low-rank bottlenecks due to their symmetry and non-saturating properties.</p>
+            </div>
+          </section>
+          <section>
+            <h5>Nonlinear Projections in Attention.</h5>
+            <div>
+              <p>Several works have explored adding nonlinearity to attention mechanisms <cite>(Choromanski<span> et
+                    al.</span>, <a href="#bib.bib9" title="Rethinking attention with performers">2020</a>;
+                  Katharopoulos<span> et al.</span>, <a href="#bib.bib10"
+                    title="Transformers are rnns: fast autoregressive transformers with linear attention">2020</a>)</cite>.
+                <cite>So<span> et al.</span> (<a href="#bib.bib11"
+                    title="Primer: searching for efficient transformers for language modeling">2021</a>)</cite> searched
+                for architectural improvements including activation functions. Our approach is orthogonal, adding
+                nonlinearity via bypass branches rather than modifying the main computation.</p>
+            </div>
+          </section>
+          <section>
+            <h5>Mixture of Experts.</h5>
+            <div>
+              <p>MoE layers <cite>(Shazeer<span> et al.</span>, <a href="#bib.bib12"
+                    title="Outrageously large neural networks: the sparsely-gated mixture-of-experts layer">2017</a>;
+                  Fedus<span> et al.</span>, <a href="#bib.bib13"
+                    title="Switch transformers: scaling to trillion parameter models with simple and efficient sparsity">2022</a>)</cite>
+                add capacity through conditional computation. NOBLE provides a simpler, dense alternative that adds
+                capacity through low-rank nonlinear branches without routing overhead.</p>
+            </div>
+          </section>
+          <section>
+            <h5>Periodic Activations.</h5>
+            <div>
+              <p>Sinusoidal representations have proven effective in neural radiance fields <cite>(Mildenhall<span> et
+                    al.</span>, <a href="#bib.bib14"
+                    title="Nerf: representing scenes as neural radiance fields for view synthesis">2020</a>)</cite> and
+                implicit neural representations <cite>(Sitzmann<span> et al.</span>, <a href="#bib.bib15"
+                    title="Implicit neural representations with periodic activation functions">2020</a>)</cite>. We
+                adopt learnable cosine activations in our bypass.</p>
+            </div>
+          </section>
+        </section>
+        <section>
+          <h2>
+            <span>3 </span>Method
+          </h2>
+          <figure><img alt="Refer to caption" />
+            <figcaption><span>Figure 2: </span><span>Comparison of low-rank adaptation architectures.</span> (a) NOBLE
+              with CosNet: a sandwich of cosine activations with learnable frequency/phase, connected by a mixing
+              projection, before projecting back to full dimensions. Key differences: trained from scratch as part of
+              the architecture (not fine-tuning), cosine activation is symmetric and non-saturating. (b) MosLoRA adds a
+              linear projection between low-rank matrices <math alttext="BMA">
+                <semantics>
+                  <mrow>
+                    <mi>B</mi>
+                    <mo>​</mo>
+                    <mi>M</mi>
+                    <mo>​</mo>
+                    <mi>A</mi>
+                  </mrow>
+                  <annotation>BMA</annotation>
+                </semantics>
+              </math>, similar structure but without nonlinear activations. (c–d) Recent nonlinear variants (AuroRA,
+              NoLoRA) introduce activations in the LoRA bottleneck for fine-tuning. (e) Standard LoRA adds a linear
+              low-rank bypass <math alttext="BA">
+                <semantics>
+                  <mrow>
+                    <mi>B</mi>
+                    <mo>​</mo>
+                    <mi>A</mi>
+                  </mrow>
+                  <annotation>BA</annotation>
+                </semantics>
+              </math>.</figcaption>
+          </figure>
+          <section>
+            <h3>
+              <span>3.1 </span>NOBLE Architecture
+            </h3>
+            <div>
+              <p>Given a standard linear layer <math alttext="f(x)=xW+b">
+                  <semantics>
+                    <mrow>
+                      <mrow>
+                        <mi>f</mi>
+                        <mo>​</mo>
+                        <mrow>
+                          <mo>(</mo>
+                          <mi>x</mi>
+                          <mo>)</mo>
+                        </mrow>
+                      </mrow>
+                      <mo>=</mo>
+                      <mrow>
+                        <mrow>
+                          <mi>x</mi>
+                          <mo>​</mo>
+                          <mi>W</mi>
+                        </mrow>
+                        <mo>+</mo>
+                        <mi>b</mi>
+                      </mrow>
+                    </mrow>
+                    <annotation>f(x)=xW+b</annotation>
+                  </semantics>
+                </math> with <math alttext="W\in\mathbb{R}^{d_{\text{in}}\times d_{\text{out}}}">
+                  <semantics>
+                    <mrow>
+                      <mi>W</mi>
+                      <mo>∈</mo>
+                      <msup>
+                        <mi>ℝ</mi>
+                        <mrow>
+                          <msub>
+                            <mi>d</mi>
+                            <mtext>in</mtext>
+                          </msub>
+                          <mo>×</mo>
+                          <msub>
+                            <mi>d</mi>
+                            <mtext>out</mtext>
+                          </msub>
+                        </mrow>
+                      </msup>
+                    </mrow>
+                    <annotation>W\in\mathbb{R}^{d_{\text{in}}\times d_{\text{out}}}</annotation>
+                  </semantics>
+                </math>, NOBLE augments it with a low-rank nonlinear branch:</p>
+              <table>
+                <tbody>
+                  <tr>
+                    <td></td>
+                    <td><math alttext="f_{\text{NOBLE}}(x)=xW+b+\sigma(xW_{\text{down}})W_{\text{up}}">
+                        <semantics>
+                          <mrow>
+                            <mrow>
+                              <msub>
+                                <mi>f</mi>
+                                <mtext>NOBLE</mtext>
+                              </msub>
+                              <mo>​</mo>
+                              <mrow>
+                                <mo>(</mo>
+                                <mi>x</mi>
+                                <mo>)</mo>
+                              </mrow>
+                            </mrow>
+                            <mo>=</mo>
+                            <mrow>
+                              <mrow>
+                                <mi>x</mi>
+                                <mo>​</mo>
+                                <mi>W</mi>
+                              </mrow>
+                              <mo>+</mo>
+                              <mi>b</mi>
+                              <mo>+</mo>
+                              <mrow>
+                                <mi>σ</mi>
+                                <mo>​</mo>
+                                <mrow>
+                                  <mo>(</mo>
+                                  <mrow>
+                                    <mi>x</mi>
+                                    <mo>​</mo>
+                                    <msub>
+                                      <mi>W</mi>
+                                      <mtext>down</mtext>
+                                    </msub>
+                                  </mrow>
+                                  <mo>)</mo>
+                                </mrow>
+                                <mo>​</mo>
+                                <msub>
+                                  <mi>W</mi>
+                                  <mtext>up</mtext>
+                                </msub>
+                              </mrow>
+                            </mrow>
+                          </mrow>
+                          <annotation>f_{\text{NOBLE}}(x)=xW+b+\sigma(xW_{\text{down}})W_{\text{up}}</annotation>
+                        </semantics>
+                      </math></td>
+                    <td></td>
+                    <td><span>(1)</span></td>
+                  </tr>
+                </tbody>
+              </table>
+              <p>where <math alttext="W_{\text{down}}\in\mathbb{R}^{d_{\text{in}}\times r}">
+                  <semantics>
+                    <mrow>
+                      <msub>
+                        <mi>W</mi>
+                        <mtext>down</mtext>
+                      </msub>
+                      <mo>∈</mo>
+                      <msup>
+                        <mi>ℝ</mi>
+                        <mrow>
+                          <msub>
+                            <mi>d</mi>
+                            <mtext>in</mtext>
+                          </msub>
+                          <mo>×</mo>
+                          <mi>r</mi>
+                        </mrow>
+                      </msup>
+                    </mrow>
+                    <annotation>W_{\text{down}}\in\mathbb{R}^{d_{\text{in}}\times r}</annotation>
+                  </semantics>
+                </math>, <math alttext="W_{\text{up}}\in\mathbb{R}^{r\times d_{\text{out}}}">
+                  <semantics>
+                    <mrow>
+                      <msub>
+                        <mi>W</mi>
+                        <mtext>up</mtext>
+                      </msub>
+                      <mo>∈</mo>
+                      <msup>
+                        <mi>ℝ</mi>
+                        <mrow>
+                          <mi>r</mi>
+                          <mo>×</mo>
+                          <msub>
+                            <mi>d</mi>
+                            <mtext>out</mtext>
+                          </msub>
+                        </mrow>
+                      </msup>
+                    </mrow>
+                    <annotation>W_{\text{up}}\in\mathbb{R}^{r\times d_{\text{out}}}</annotation>
+                  </semantics>
+                </math>, <math alttext="r\ll\min(d_{\text{in}},d_{\text{out}})">
+                  <semantics>
+                    <mrow>
+                      <mi>r</mi>
+                      <mo>≪</mo>
+                      <mrow>
+                        <mi>min</mi>
+                        <mo>⁡</mo>
+                        <mrow>
+                          <mo>(</mo>
+                          <msub>
+                            <mi>d</mi>
+                            <mtext>in</mtext>
+                          </msub>
+                          <mo>,</mo>
+                          <msub>
+                            <mi>d</mi>
+                            <mtext>out</mtext>
+                          </msub>
+                          <mo>)</mo>
+                        </mrow>
+                      </mrow>
+                    </mrow>
+                    <annotation>r\ll\min(d_{\text{in}},d_{\text{out}})</annotation>
+                  </semantics>
+                </math> is the bottleneck rank, and <math alttext="\sigma">
+                  <semantics>
+                    <mi>σ</mi>
+                    <annotation>\sigma</annotation>
+                  </semantics>
+                </math> is a nonlinear activation function. We evaluated several choices for <math alttext="\sigma">
+                  <semantics>
+                    <mi>σ</mi>
+                    <annotation>\sigma</annotation>
+                  </semantics>
+                </math> and find that cosine-based activations perform best (see Section <a href="#S4"
+                  title="4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>4</span></a>).
+              </p>
+            </div>
+          </section>
+          <section>
+            <h3>
+              <span>3.2 </span>CosNet: Recommended Nonlinearity
+            </h3>
+            <div>
+              <p>Among several activation functions we evaluate (see Section <a href="#S4"
+                  title="4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>4</span></a>),
+                we recommend <span>CosNet</span>, a two-layer cosine nonlinearity operating in the bottleneck space:</p>
+              <table>
+                <tbody>
+                  <tr>
+                    <td></td>
+                    <td><math
+                        alttext="\sigma_{\text{cos}}(h)=\cos(\omega_{2}\odot(M\cdot\cos(\omega_{1}\odot h+\phi_{1}))+\phi_{2})">
+                        <semantics>
+                          <mrow>
+                            <mrow>
+                              <msub>
+                                <mi>σ</mi>
+                                <mtext>cos</mtext>
+                              </msub>
+                              <mo>​</mo>
+                              <mrow>
+                                <mo>(</mo>
+                                <mi>h</mi>
+                                <mo>)</mo>
+                              </mrow>
+                            </mrow>
+                            <mo>=</mo>
+                            <mrow>
+                              <mi>cos</mi>
+                              <mo>⁡</mo>
+                              <mrow>
+                                <mo>(</mo>
+                                <mrow>
+                                  <mrow>
+                                    <msub>
+                                      <mi>ω</mi>
+                                      <mn>2</mn>
+                                    </msub>
+                                    <mo>⊙</mo>
+                                    <mrow>
+                                      <mo>(</mo>
+                                      <mrow>
+                                        <mi>M</mi>
+                                        <mo>⋅</mo>
+                                        <mrow>
+                                          <mi>cos</mi>
+                                          <mo>⁡</mo>
+                                          <mrow>
+                                            <mo>(</mo>
+                                            <mrow>
+                                              <mrow>
+                                                <msub>
+                                                  <mi>ω</mi>
+                                                  <mn>1</mn>
+                                                </msub>
+                                                <mo>⊙</mo>
+                                                <mi>h</mi>
+                                              </mrow>
+                                              <mo>+</mo>
+                                              <msub>
+                                                <mi>ϕ</mi>
+                                                <mn>1</mn>
+                                              </msub>
+                                            </mrow>
+                                            <mo>)</mo>
+                                          </mrow>
+                                        </mrow>
+                                      </mrow>
+                                      <mo>)</mo>
+                                    </mrow>
+                                  </mrow>
+                                  <mo>+</mo>
+                                  <msub>
+                                    <mi>ϕ</mi>
+                                    <mn>2</mn>
+                                  </msub>
+                                </mrow>
+                                <mo>)</mo>
+                              </mrow>
+                            </mrow>
+                          </mrow>
+                          <annotation>\sigma_{\text{cos}}(h)=\cos(\omega_{2}\odot(M\cdot\cos(\omega_{1}\odot
+                            h+\phi_{1}))+\phi_{2})</annotation>
+                        </semantics>
+                      </math></td>
+                    <td></td>
+                    <td><span>(2)</span></td>
+                  </tr>
+                </tbody>
+              </table>
+              <p>where <math alttext="h\in\mathbb{R}^{r}">
+                  <semantics>
+                    <mrow>
+                      <mi>h</mi>
+                      <mo>∈</mo>
+                      <msup>
+                        <mi>ℝ</mi>
+                        <mi>r</mi>
+                      </msup>
+                    </mrow>
+                    <annotation>h\in\mathbb{R}^{r}</annotation>
+                  </semantics>
+                </math> is the bottleneck representation, <math alttext="M\in\mathbb{R}^{r\times r}">
+                  <semantics>
+                    <mrow>
+                      <mi>M</mi>
+                      <mo>∈</mo>
+                      <msup>
+                        <mi>ℝ</mi>
+                        <mrow>
+                          <mi>r</mi>
+                          <mo>×</mo>
+                          <mi>r</mi>
+                        </mrow>
+                      </msup>
+                    </mrow>
+                    <annotation>M\in\mathbb{R}^{r\times r}</annotation>
+                  </semantics>
+                </math> is a learned mixing matrix, and each dimension <math alttext="i">
+                  <semantics>
+                    <mi>i</mi>
+                    <annotation>i</annotation>
+                  </semantics>
+                </math> has learnable frequency <math alttext="\omega_{i}">
+                  <semantics>
+                    <msub>
+                      <mi>ω</mi>
+                      <mi>i</mi>
+                    </msub>
+                    <annotation>\omega_{i}</annotation>
+                  </semantics>
+                </math> and phase <math alttext="\phi_{i}">
+                  <semantics>
+                    <msub>
+                      <mi>ϕ</mi>
+                      <mi>i</mi>
+                    </msub>
+                    <annotation>\phi_{i}</annotation>
+                  </semantics>
+                </math> parameters.</p>
+            </div>
+            <div>
+              <p>The cosine activation <math alttext="\cos(\omega\odot x+\phi)">
+                  <semantics>
+                    <mrow>
+                      <mi>cos</mi>
+                      <mo>⁡</mo>
+                      <mrow>
+                        <mo>(</mo>
+                        <mrow>
+                          <mrow>
+                            <mi>ω</mi>
+                            <mo>⊙</mo>
+                            <mi>x</mi>
+                          </mrow>
+                          <mo>+</mo>
+                          <mi>ϕ</mi>
+                        </mrow>
+                        <mo>)</mo>
+                      </mrow>
+                    </mrow>
+                    <annotation>\cos(\omega\odot x+\phi)</annotation>
+                  </semantics>
+                </math> has several properties we theorize may be desirable:</p>
+              <ul>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p><span>Bounded output</span>: Unlike ReLU or GELU, cosine outputs are bounded in <math
+                        alttext="[-1,1]">
+                        <semantics>
+                          <mrow>
+                            <mo>[</mo>
+                            <mrow>
+                              <mo>−</mo>
+                              <mn>1</mn>
+                            </mrow>
+                            <mo>,</mo>
+                            <mn>1</mn>
+                            <mo>]</mo>
+                          </mrow>
+                          <annotation>[-1,1]</annotation>
+                        </semantics>
+                      </math>, providing natural regularization.</p>
+                  </div>
+                </li>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p><span>Smooth and periodic</span>: Enables modeling of periodic patterns and smooth
+                      interpolations.</p>
+                  </div>
+                </li>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p><span>Learnable frequency</span>: The frequency parameters <math alttext="\omega">
+                        <semantics>
+                          <mi>ω</mi>
+                          <annotation>\omega</annotation>
+                        </semantics>
+                      </math> control the sensitivity to input variations, adapting to the data distribution.</p>
+                  </div>
+                </li>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p><span>Learnable phase</span>: The phase parameters <math alttext="\phi">
+                        <semantics>
+                          <mi>ϕ</mi>
+                          <annotation>\phi</annotation>
+                        </semantics>
+                      </math> allow shifting the nonlinearity’s operating point.</p>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </section>
+          <section>
+            <h3>
+              <span>3.3 </span>Key Design Choices
+            </h3>
+            <section>
+              <h5>Near-Zero Initialization of <math alttext="W_{\text{up}}">
+                  <semantics>
+                    <msub>
+                      <mi>W</mi>
+                      <mtext>up</mtext>
+                    </msub>
+                    <annotation>W_{\text{up}}</annotation>
+                  </semantics>
+                </math>.</h5>
+              <div>
+                <p>We initialize <math alttext="W_{\text{up}}">
+                    <semantics>
+                      <msub>
+                        <mi>W</mi>
+                        <mtext>up</mtext>
+                      </msub>
+                      <annotation>W_{\text{up}}</annotation>
+                    </semantics>
+                  </math> with small standard deviation <math alttext="\alpha/\sqrt{r}">
+                    <semantics>
+                      <mrow>
+                        <mi>α</mi>
+                        <mo>/</mo>
+                        <msqrt>
+                          <mi>r</mi>
+                        </msqrt>
+                      </mrow>
+                      <annotation>\alpha/\sqrt{r}</annotation>
+                    </semantics>
+                  </math> with <math alttext="\alpha=0.01">
+                    <semantics>
+                      <mrow>
+                        <mi>α</mi>
+                        <mo>=</mo>
+                        <mn>0.01</mn>
+                      </mrow>
+                      <annotation>\alpha=0.01</annotation>
+                    </semantics>
+                  </math>, ensuring the branch contributes negligibly at initialization. This allows the main linear
+                  layer to dominate early training while the branch gradually learns complementary features.</p>
+              </div>
+            </section>
+            <section>
+              <h5>Reduced Main Weight Initialization.</h5>
+              <div>
+                <p>We initialize the main linear layer <math alttext="W">
+                    <semantics>
+                      <mi>W</mi>
+                      <annotation>W</annotation>
+                    </semantics>
+                  </math> with standard deviation <math alttext="0.5/\sqrt{d_{\text{in}}}">
+                    <semantics>
+                      <mrow>
+                        <mn>0.5</mn>
+                        <mo>/</mo>
+                        <msqrt>
+                          <msub>
+                            <mi>d</mi>
+                            <mtext>in</mtext>
+                          </msub>
+                        </msqrt>
+                      </mrow>
+                      <annotation>0.5/\sqrt{d_{\text{in}}}</annotation>
+                    </semantics>
+                  </math>, half the typical Kaiming scale. This slightly reduces the main pathway’s initial magnitude,
+                  leaving more room for the branch to contribute as training progresses.</p>
+              </div>
+            </section>
+            <section>
+              <h5>Learning Rate Scaling.</h5>
+              <div>
+                <p>The low-rank structure necessitates careful learning rate treatment. Roughly following <math
+                    alttext="\mu">
+                    <semantics>
+                      <mi>μ</mi>
+                      <annotation>\mu</annotation>
+                    </semantics>
+                  </math>P <cite>(Yang<span> et al.</span>, <a href="#bib.bib2"
+                      title="Tensor programs v: tuning large neural networks via zero-shot hyperparameter transfer">2022</a>)</cite>,
+                  we apply elevated learning rates to <math alttext="W_{\text{up}}">
+                    <semantics>
+                      <msub>
+                        <mi>W</mi>
+                        <mtext>up</mtext>
+                      </msub>
+                      <annotation>W_{\text{up}}</annotation>
+                    </semantics>
+                  </math> and the CosNet mixing matrix <math alttext="M">
+                    <semantics>
+                      <mi>M</mi>
+                      <annotation>M</annotation>
+                    </semantics>
+                  </math>, while <math alttext="W_{\text{down}}">
+                    <semantics>
+                      <msub>
+                        <mi>W</mi>
+                        <mtext>down</mtext>
+                      </msub>
+                      <annotation>W_{\text{down}}</annotation>
+                    </semantics>
+                  </math> uses the base learning rate. Specifically:</p>
+                <table>
+                  <tbody>
+                    <tr>
+                      <td></td>
+                      <td><math alttext="\displaystyle\text{lr}_{W_{\text{up}}}">
+                          <semantics>
+                            <msub>
+                              <mtext>lr</mtext>
+                              <msub>
+                                <mi>W</mi>
+                                <mtext>up</mtext>
+                              </msub>
+                            </msub>
+                            <annotation>\displaystyle\text{lr}_{W_{\text{up}}}</annotation>
+                          </semantics>
+                        </math></td>
+                      <td><math
+                          alttext="\displaystyle=\text{lr}_{\text{base}}\cdot\left(\frac{\min(d_{\text{in}},d_{\text{out}})}{r}\right)^{2\gamma}">
+                          <semantics>
+                            <mrow>
+                              <mi></mi>
+                              <mo>=</mo>
+                              <mrow>
+                                <msub>
+                                  <mtext>lr</mtext>
+                                  <mtext>base</mtext>
+                                </msub>
+                                <mo>⋅</mo>
+                                <msup>
+                                  <mrow>
+                                    <mo>(</mo>
+                                    <mstyle>
+                                      <mfrac>
+                                        <mrow>
+                                          <mi>min</mi>
+                                          <mo>⁡</mo>
+                                          <mrow>
+                                            <mo>(</mo>
+                                            <msub>
+                                              <mi>d</mi>
+                                              <mtext>in</mtext>
+                                            </msub>
+                                            <mo>,</mo>
+                                            <msub>
+                                              <mi>d</mi>
+                                              <mtext>out</mtext>
+                                            </msub>
+                                            <mo>)</mo>
+                                          </mrow>
+                                        </mrow>
+                                        <mi>r</mi>
+                                      </mfrac>
+                                    </mstyle>
+                                    <mo>)</mo>
+                                  </mrow>
+                                  <mrow>
+                                    <mn>2</mn>
+                                    <mo>​</mo>
+                                    <mi>γ</mi>
+                                  </mrow>
+                                </msup>
+                              </mrow>
+                            </mrow>
+                            <annotation>
+                              \displaystyle=\text{lr}_{\text{base}}\cdot\left(\frac{\min(d_{\text{in}},d_{\text{out}})}{r}\right)^{2\gamma}
+                            </annotation>
+                          </semantics>
+                        </math></td>
+                      <td></td>
+                      <td><span>(3)</span></td>
+                    </tr>
+                  </tbody>
+                  <tbody>
+                    <tr>
+                      <td></td>
+                      <td><math alttext="\displaystyle\text{lr}_{M}">
+                          <semantics>
+                            <msub>
+                              <mtext>lr</mtext>
+                              <mi>M</mi>
+                            </msub>
+                            <annotation>\displaystyle\text{lr}_{M}</annotation>
+                          </semantics>
+                        </math></td>
+                      <td><math
+                          alttext="\displaystyle=\text{lr}_{\text{base}}\cdot\left(\frac{\min(d_{\text{in}},d_{\text{out}})}{r}\right)^{\gamma_{M}}">
+                          <semantics>
+                            <mrow>
+                              <mi></mi>
+                              <mo>=</mo>
+                              <mrow>
+                                <msub>
+                                  <mtext>lr</mtext>
+                                  <mtext>base</mtext>
+                                </msub>
+                                <mo>⋅</mo>
+                                <msup>
+                                  <mrow>
+                                    <mo>(</mo>
+                                    <mstyle>
+                                      <mfrac>
+                                        <mrow>
+                                          <mi>min</mi>
+                                          <mo>⁡</mo>
+                                          <mrow>
+                                            <mo>(</mo>
+                                            <msub>
+                                              <mi>d</mi>
+                                              <mtext>in</mtext>
+                                            </msub>
+                                            <mo>,</mo>
+                                            <msub>
+                                              <mi>d</mi>
+                                              <mtext>out</mtext>
+                                            </msub>
+                                            <mo>)</mo>
+                                          </mrow>
+                                        </mrow>
+                                        <mi>r</mi>
+                                      </mfrac>
+                                    </mstyle>
+                                    <mo>)</mo>
+                                  </mrow>
+                                  <msub>
+                                    <mi>γ</mi>
+                                    <mi>M</mi>
+                                  </msub>
+                                </msup>
+                              </mrow>
+                            </mrow>
+                            <annotation>
+                              \displaystyle=\text{lr}_{\text{base}}\cdot\left(\frac{\min(d_{\text{in}},d_{\text{out}})}{r}\right)^{\gamma_{M}}
+                            </annotation>
+                          </semantics>
+                        </math></td>
+                      <td></td>
+                      <td><span>(4)</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p>where <math alttext="\gamma=0.3">
+                    <semantics>
+                      <mrow>
+                        <mi>γ</mi>
+                        <mo>=</mo>
+                        <mn>0.3</mn>
+                      </mrow>
+                      <annotation>\gamma=0.3</annotation>
+                    </semantics>
+                  </math> is the base learning rate multiplier power (so <math alttext="W_{\text{up}}">
+                    <semantics>
+                      <msub>
+                        <mi>W</mi>
+                        <mtext>up</mtext>
+                      </msub>
+                      <annotation>W_{\text{up}}</annotation>
+                    </semantics>
+                  </math> uses exponent <math alttext="2\gamma=0.6">
+                    <semantics>
+                      <mrow>
+                        <mrow>
+                          <mn>2</mn>
+                          <mo>​</mo>
+                          <mi>γ</mi>
+                        </mrow>
+                        <mo>=</mo>
+                        <mn>0.6</mn>
+                      </mrow>
+                      <annotation>2\gamma=0.6</annotation>
+                    </semantics>
+                  </math>), and <math alttext="\gamma_{M}=0.45">
+                    <semantics>
+                      <mrow>
+                        <msub>
+                          <mi>γ</mi>
+                          <mi>M</mi>
+                        </msub>
+                        <mo>=</mo>
+                        <mn>0.45</mn>
+                      </mrow>
+                      <annotation>\gamma_{M}=0.45</annotation>
+                    </semantics>
+                  </math> for the mixing matrix.</p>
+              </div>
+            </section>
+            <section>
+              <h5>CosNet Initialization.</h5>
+              <div>
+                <p>We initialize the learnable frequency multipliers by sampling uniformly from <math
+                    alttext="[\omega_{\text{min}},\omega_{\text{max}}]">
+                    <semantics>
+                      <mrow>
+                        <mo>[</mo>
+                        <msub>
+                          <mi>ω</mi>
+                          <mtext>min</mtext>
+                        </msub>
+                        <mo>,</mo>
+                        <msub>
+                          <mi>ω</mi>
+                          <mtext>max</mtext>
+                        </msub>
+                        <mo>]</mo>
+                      </mrow>
+                      <annotation>[\omega_{\text{min}},\omega_{\text{max}}]</annotation>
+                    </semantics>
+                  </math> (default: <math alttext="[0.8,1.2]">
+                    <semantics>
+                      <mrow>
+                        <mo>[</mo>
+                        <mn>0.8</mn>
+                        <mo>,</mo>
+                        <mn>1.2</mn>
+                        <mo>]</mo>
+                      </mrow>
+                      <annotation>[0.8,1.2]</annotation>
+                    </semantics>
+                  </math>). Phases are initialized from <math alttext="\mathcal{N}(0,\sigma_{\phi}^{2})">
+                    <semantics>
+                      <mrow>
+                        <mi>𝒩</mi>
+                        <mo>​</mo>
+                        <mrow>
+                          <mo>(</mo>
+                          <mn>0</mn>
+                          <mo>,</mo>
+                          <msubsup>
+                            <mi>σ</mi>
+                            <mi>ϕ</mi>
+                            <mn>2</mn>
+                          </msubsup>
+                          <mo>)</mo>
+                        </mrow>
+                      </mrow>
+                      <annotation>\mathcal{N}(0,\sigma_{\phi}^{2})</annotation>
+                    </semantics>
+                  </math> with <math alttext="\sigma_{\phi}=0.1">
+                    <semantics>
+                      <mrow>
+                        <msub>
+                          <mi>σ</mi>
+                          <mi>ϕ</mi>
+                        </msub>
+                        <mo>=</mo>
+                        <mn>0.1</mn>
+                      </mrow>
+                      <annotation>\sigma_{\phi}=0.1</annotation>
+                    </semantics>
+                  </math>. The mixing matrix <math alttext="M">
+                    <semantics>
+                      <mi>M</mi>
+                      <annotation>M</annotation>
+                    </semantics>
+                  </math> uses Xavier initialization.</p>
+              </div>
+            </section>
+          </section>
+          <section>
+            <h3>
+              <span>3.4 </span>Computational Overhead
+            </h3>
+            <div>
+              <p>For typical settings (<math alttext="d_{\text{in}}=d_{\text{out}}=d">
+                  <semantics>
+                    <mrow>
+                      <msub>
+                        <mi>d</mi>
+                        <mtext>in</mtext>
+                      </msub>
+                      <mo>=</mo>
+                      <msub>
+                        <mi>d</mi>
+                        <mtext>out</mtext>
+                      </msub>
+                      <mo>=</mo>
+                      <mi>d</mi>
+                    </mrow>
+                    <annotation>d_{\text{in}}=d_{\text{out}}=d</annotation>
+                  </semantics>
+                </math>, <math alttext="r=64">
+                  <semantics>
+                    <mrow>
+                      <mi>r</mi>
+                      <mo>=</mo>
+                      <mn>64</mn>
+                    </mrow>
+                    <annotation>r=64</annotation>
+                  </semantics>
+                </math>–<math alttext="128">
+                  <semantics>
+                    <mn>128</mn>
+                    <annotation>128</annotation>
+                  </semantics>
+                </math>), NOBLE adds:</p>
+              <ul>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p><span>Parameters</span>: 4–12% additional (low-rank matrices + CosNet parameters)</p>
+                  </div>
+                </li>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p><span>Step time</span>: 7–12% longer (measured on H100 GPUs using with bf16 mixed precision,
+                      torch.compile using reduce-overhead mode and fullgraph=True)</p>
+                  </div>
+                </li>
+              </ul>
+              <p>These percentages are <em>relative to model size</em>: the same rank on a larger model yields
+                proportionally smaller overhead. For example, rank 64 adds 5.7% parameters to our 250M base model but
+                only 4.0% to our 1.5B large model (see Table <a href="#S4.T1"
+                  title="Table 1 ‣ 4.1.1 Autoregressive LLM Pretraining ‣ 4.1 Language Model Experiments ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>1</span></a>).
+                Critically, despite this per-step overhead, the 21–32% reduction in training steps yields <span>net
+                  wallclock speedups of 1.17–1.22<math alttext="\times">
+                    <semantics>
+                      <mo>×</mo>
+                      <annotation>\times</annotation>
+                    </semantics>
+                  </math></span>.</p>
+            </div>
+          </section>
+        </section>
+        <section>
+          <h2>
+            <span>4 </span>Experiments
+          </h2>
+          <div>
+            <p>We evaluate NOBLE across five experiments spanning language and vision tasks. Our central finding is that
+              NOBLE provides consistent and significant benefits for autoregressive token prediction (LLM, image tokens)
+              and masked language modeling (BERT), but does not improve ViT image classification when certain
+              augmentations are enabled in training.</p>
+          </div>
+          <section>
+            <h3>
+              <span>4.1 </span>Language Model Experiments
+            </h3>
+            <section>
+              <h4>
+                <span>4.1.1 </span>Autoregressive LLM Pretraining
+              </h4>
+              <div>
+                <p><span>Setup.</span> We train LLM transformers on OpenWebText <cite>(Gokaslan and Cohen, <a
+                      href="#bib.bib16" title="OpenWebText corpus">2019</a>)</cite>. The architecture uses GeGLU
+                  feedforward blocks <cite>(Shazeer, <a href="#bib.bib17"
+                      title="Glu variants improve transformer">2020</a>)</cite> with hidden dimension <math
+                    alttext="\frac{8}{3}d">
+                    <semantics>
+                      <mrow>
+                        <mfrac>
+                          <mn>8</mn>
+                          <mn>3</mn>
+                        </mfrac>
+                        <mo>​</mo>
+                        <mi>d</mi>
+                      </mrow>
+                      <annotation>\frac{8}{3}d</annotation>
+                    </semantics>
+                  </math> (aligned to 64), RoPE positional encodings <cite>(Su<span> et al.</span>, <a href="#bib.bib19"
+                      title="Roformer: enhanced transformer with rotary position embedding">2024</a>)</cite>, and
+                  RMSNorm <cite>(Zhang and Sennrich, <a href="#bib.bib20"
+                      title="Root mean square layer normalization">2019</a>)</cite>. We test two configurations:</p>
+                <ul>
+                  <li>
+                    <span>•</span>
+                    <div>
+                      <p><span>Base</span>: depth 12, width 1024, 8 attention heads, batch 64, lr <math
+                          alttext="3\times 10^{-4}">
+                          <semantics>
+                            <mrow>
+                              <mn>3</mn>
+                              <mo>×</mo>
+                              <msup>
+                                <mn>10</mn>
+                                <mrow>
+                                  <mo>−</mo>
+                                  <mn>4</mn>
+                                </mrow>
+                              </msup>
+                            </mrow>
+                            <annotation>3\times 10^{-4}</annotation>
+                          </semantics>
+                        </math>, 250k steps</p>
+                    </div>
+                  </li>
+                  <li>
+                    <span>•</span>
+                    <div>
+                      <p><span>Large</span>: depth 24, width 2048, 16 attention heads, batch 128, lr <math
+                          alttext="2.5\times 10^{-4}">
+                          <semantics>
+                            <mrow>
+                              <mn>2.5</mn>
+                              <mo>×</mo>
+                              <msup>
+                                <mn>10</mn>
+                                <mrow>
+                                  <mo>−</mo>
+                                  <mn>4</mn>
+                                </mrow>
+                              </msup>
+                            </mrow>
+                            <annotation>2.5\times 10^{-4}</annotation>
+                          </semantics>
+                        </math>, 200k steps</p>
+                    </div>
+                  </li>
+                </ul>
+                <p>Both use weight decay 0.01, <math alttext="\beta_{1}=0.9">
+                    <semantics>
+                      <mrow>
+                        <msub>
+                          <mi>β</mi>
+                          <mn>1</mn>
+                        </msub>
+                        <mo>=</mo>
+                        <mn>0.9</mn>
+                      </mrow>
+                      <annotation>\beta_{1}=0.9</annotation>
+                    </semantics>
+                  </math>, <math alttext="\beta_{2}=0.98">
+                    <semantics>
+                      <mrow>
+                        <msub>
+                          <mi>β</mi>
+                          <mn>2</mn>
+                        </msub>
+                        <mo>=</mo>
+                        <mn>0.98</mn>
+                      </mrow>
+                      <annotation>\beta_{2}=0.98</annotation>
+                    </semantics>
+                  </math>, sequence length 1024.</p>
+              </div>
+              <div>
+                <p>NOBLE is applied to all linear projections (Q, K, V, output projection, and both FFN layers, we leave
+                  ablations on selecting which layers to apply NOBLE to for future work). We ablate across ranks 64,
+                  128, and 256.</p>
+              </div>
+              <div>
+                <p><span>Results.</span> Table <a href="#S4.T1"
+                    title="Table 1 ‣ 4.1.1 Autoregressive LLM Pretraining ‣ 4.1 Language Model Experiments ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>1</span></a>
+                  shows that NOBLE consistently achieves lower final loss than the baseline. We report <em>step
+                    speedup</em> (ratio of baseline steps to steps needed to reach baseline’s final loss) and
+                  <em>wallclock speedup</em> (accounting for per-step overhead). Figure <a href="#S4.F3"
+                    title="Figure 3 ‣ 4.1.1 Autoregressive LLM Pretraining ‣ 4.1 Language Model Experiments ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>3</span></a>
+                  shows the training curves.</p>
+              </div>
+              <figure>
+                <figcaption><span>Table 1: </span>Autoregressive language modeling results on OpenWebText. NOBLE reaches
+                  baseline loss significantly faster despite per-step overhead, yielding net wallclock savings.
+                </figcaption>
+                <div><span>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Model</th>
+                          <th>Configuration</th>
+                          <th>Rank</th>
+                          <th>Params+</th>
+                          <th>Step Time+</th>
+                          <th>Eval Loss</th>
+                          <th>
+                            <math alttext="\Delta">
+                              <semantics>
+                                <mi>Δ</mi>
+                                <annotation>\Delta</annotation>
+                              </semantics>
+                            </math> Loss
+                          </th>
+                          <th>Step Speedup</th>
+                          <th>Wallclock Speedup</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <th><span>
+                              <span>
+                                <span>Base 250M</span>
+                                <span>(12L, 1024d)</span>
+                              </span></span></th>
+                          <th>Baseline</th>
+                          <th>–</th>
+                          <td>–</td>
+                          <td>–</td>
+                          <td>2.850</td>
+                          <td>–</td>
+                          <td>1.00<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                          <td>1.00<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                        </tr>
+                        <tr>
+                          <th>NOBLE+CosNet</th>
+                          <th>64</th>
+                          <td>+5.7%</td>
+                          <td>+7.6%</td>
+                          <td>2.810</td>
+                          <td>–0.040</td>
+                          <td>1.26<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                          <td>1.17<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                        </tr>
+                        <tr>
+                          <th>NOBLE+CosNet</th>
+                          <th>128</th>
+                          <td>+11.6%</td>
+                          <td>+11.5%</td>
+                          <td>2.798</td>
+                          <td>–0.052</td>
+                          <td>1.35<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                          <td>1.21<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                        </tr>
+                        <tr>
+                          <th>NOBLE+CosNet</th>
+                          <th>256</th>
+                          <td>+24.1%</td>
+                          <td>+20.8%</td>
+                          <td>2.780</td>
+                          <td>–0.070</td>
+                          <td>1.47<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                          <td>1.22<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                        </tr>
+                        <tr>
+                          <th><span>
+                              <span>
+                                <span>Large 1.5B</span>
+                                <span>(24L, 2048d)</span>
+                              </span></span></th>
+                          <th>Baseline</th>
+                          <th>–</th>
+                          <td>–</td>
+                          <td>–</td>
+                          <td>2.513</td>
+                          <td>–</td>
+                          <td>1.00<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                          <td>1.00<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                        </tr>
+                        <tr>
+                          <th>NOBLE+CosNet</th>
+                          <th>64</th>
+                          <td>+4.0%</td>
+                          <td>+6.8%</td>
+                          <td>2.476</td>
+                          <td>–0.037</td>
+                          <td>1.27<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                          <td>1.19<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                        </tr>
+                        <tr>
+                          <th>NOBLE+CosNet</th>
+                          <th>128</th>
+                          <td>+8.2%</td>
+                          <td>+11.3%</td>
+                          <td>2.468</td>
+                          <td>–0.045</td>
+                          <td>1.34<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                          <td>1.20<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                        </tr>
+                        <tr>
+                          <th>NOBLE+CosNet</th>
+                          <th>256</th>
+                          <td>+16.6%</td>
+                          <td>+14.7%</td>
+                          <td>2.463</td>
+                          <td>–0.050</td>
+                          <td>1.37<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                          <td>1.19<math alttext="\times">
+                              <semantics>
+                                <mo>×</mo>
+                                <annotation>\times</annotation>
+                              </semantics>
+                            </math>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </span></div>
+              </figure>
+              <figure>
+                <div>
+                  <div>
+                    <div>
+                      <img alt="Refer to caption" />
+                    </div>
+                  </div>
+                  <div>
+                    <div>
+                      <img alt="Refer to caption" />
+                    </div>
+                  </div>
+                </div>
+                <figcaption><span>Figure 3: </span><span>Eval loss curves for autoregressive language modeling.</span>
+                  Left: LLM Base 250M. Right: LLM Large 1.5B. NOBLE configurations (solid) consistently achieve lower
+                  loss than baseline (dashed) throughout training. Higher ranks provide greater improvement. First 20%
+                  of training truncated for clarity.</figcaption>
+              </figure>
+              <div>
+                <p><span>Computational overhead.</span> On the Base model, absolute step times are 309ms (baseline),
+                  332ms (r64), 344ms (r128), and 373ms (r256), measured on 8<math alttext="\times">
+                    <semantics>
+                      <mo>×</mo>
+                      <annotation>\times</annotation>
+                    </semantics>
+                  </math>H100 with batch 64. Despite 7–21% longer step times, the 21–32% reduction in steps to reach
+                  baseline loss yields 1.17–1.22<math alttext="\times">
+                    <semantics>
+                      <mo>×</mo>
+                      <annotation>\times</annotation>
+                    </semantics>
+                  </math> net wallclock speedup.</p>
+              </div>
+            </section>
+            <section>
+              <h4>
+                <span>4.1.2 </span>BERT-Style Masked Language Modeling
+              </h4>
+              <div>
+                <p><span>Setup.</span> We train a BERT-style transformer with bidirectional attention on OpenWebText
+                  using masked language modeling (15% masking probability, standard 80/10/10 mask/random/unchanged
+                  split). Architecture: depth 12, width 768, 12 attention heads. Training: batch 64, lr <math
+                    alttext="3\times 10^{-4}">
+                    <semantics>
+                      <mrow>
+                        <mn>3</mn>
+                        <mo>×</mo>
+                        <msup>
+                          <mn>10</mn>
+                          <mrow>
+                            <mo>−</mo>
+                            <mn>4</mn>
+                          </mrow>
+                        </msup>
+                      </mrow>
+                      <annotation>3\times 10^{-4}</annotation>
+                    </semantics>
+                  </math>, 100k steps, <math alttext="\beta_{1}=0.9">
+                    <semantics>
+                      <mrow>
+                        <msub>
+                          <mi>β</mi>
+                          <mn>1</mn>
+                        </msub>
+                        <mo>=</mo>
+                        <mn>0.9</mn>
+                      </mrow>
+                      <annotation>\beta_{1}=0.9</annotation>
+                    </semantics>
+                  </math>, <math alttext="\beta_{2}=0.98">
+                    <semantics>
+                      <mrow>
+                        <msub>
+                          <mi>β</mi>
+                          <mn>2</mn>
+                        </msub>
+                        <mo>=</mo>
+                        <mn>0.98</mn>
+                      </mrow>
+                      <annotation>\beta_{2}=0.98</annotation>
+                    </semantics>
+                  </math>, weight decay 0.01. We use RoPE positional encodings (unlike standard BERT) to match our LLM
+                  setup.</p>
+              </div>
+              <div>
+                <p><span>Results.</span> Table <a href="#S4.T2"
+                    title="Table 2 ‣ 4.1.2 BERT-Style Masked Language Modeling ‣ 4.1 Language Model Experiments ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>2</span></a>
+                  shows NOBLE also improves BERT pretraining, though with more modest speedups than those observed with
+                  our LLM experiments.</p>
+              </div>
+              <figure>
+                <figcaption><span>Table 2: </span>BERT-style MLM results on OpenWebText (100k steps).</figcaption>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Configuration</th>
+                      <th>Rank</th>
+                      <th>Eval Loss</th>
+                      <th>
+                        <math alttext="\Delta">
+                          <semantics>
+                            <mi>Δ</mi>
+                            <annotation>\Delta</annotation>
+                          </semantics>
+                        </math> Loss
+                      </th>
+                      <th>Step Speedup</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <th>Baseline</th>
+                      <th>–</th>
+                      <td>1.414</td>
+                      <td>–</td>
+                      <td>1.00<math alttext="\times">
+                          <semantics>
+                            <mo>×</mo>
+                            <annotation>\times</annotation>
+                          </semantics>
+                        </math>
+                      </td>
+                    </tr>
+                    <tr>
+                      <th>NOBLE+CosNet</th>
+                      <th>64</th>
+                      <td>1.393</td>
+                      <td>–0.021</td>
+                      <td>1.10<math alttext="\times">
+                          <semantics>
+                            <mo>×</mo>
+                            <annotation>\times</annotation>
+                          </semantics>
+                        </math>
+                      </td>
+                    </tr>
+                    <tr>
+                      <th>NOBLE+CosNet</th>
+                      <th>128</th>
+                      <td>1.371</td>
+                      <td>–0.044</td>
+                      <td>1.17<math alttext="\times">
+                          <semantics>
+                            <mo>×</mo>
+                            <annotation>\times</annotation>
+                          </semantics>
+                        </math>
+                      </td>
+                    </tr>
+                    <tr>
+                      <th>NOBLE+CosNet</th>
+                      <th>256</th>
+                      <td>1.351</td>
+                      <td>–0.064</td>
+                      <td>1.26<math alttext="\times">
+                          <semantics>
+                            <mo>×</mo>
+                            <annotation>\times</annotation>
+                          </semantics>
+                        </math>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </figure>
+            </section>
+          </section>
+          <section>
+            <h3>
+              <span>4.2 </span>Image Model Experiments
+            </h3>
+            <section>
+              <h4>
+                <span>4.2.1 </span>ViT-S ImageNet Classification
+              </h4>
+              <div>
+                <p><span>Setup.</span> We train ViT-Small (22M parameters) on ImageNet-1k for 90 epochs with batch size
+                  1024, image size 224, RandAugment, learning rate <math alttext="3\times 10^{-4}">
+                    <semantics>
+                      <mrow>
+                        <mn>3</mn>
+                        <mo>×</mo>
+                        <msup>
+                          <mn>10</mn>
+                          <mrow>
+                            <mo>−</mo>
+                            <mn>4</mn>
+                          </mrow>
+                        </msup>
+                      </mrow>
+                      <annotation>3\times 10^{-4}</annotation>
+                    </semantics>
+                  </math>, <math alttext="\beta_{1}=0.9">
+                    <semantics>
+                      <mrow>
+                        <msub>
+                          <mi>β</mi>
+                          <mn>1</mn>
+                        </msub>
+                        <mo>=</mo>
+                        <mn>0.9</mn>
+                      </mrow>
+                      <annotation>\beta_{1}=0.9</annotation>
+                    </semantics>
+                  </math>, <math alttext="\beta_{2}=0.98">
+                    <semantics>
+                      <mrow>
+                        <msub>
+                          <mi>β</mi>
+                          <mn>2</mn>
+                        </msub>
+                        <mo>=</mo>
+                        <mn>0.98</mn>
+                      </mrow>
+                      <annotation>\beta_{2}=0.98</annotation>
+                    </semantics>
+                  </math>, weight decay 0.05, and cosine annealing with 5 warmup epochs. We compare configurations with
+                  and without Mixup/CutMix augmentation.</p>
+              </div>
+              <div>
+                <p><span>Results.</span> Table <a href="#S4.T3"
+                    title="Table 3 ‣ 4.2.1 ViT-S ImageNet Classification ‣ 4.2 Image Model Experiments ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>3</span></a>
+                  and Figure <a href="#S4.F4"
+                    title="Figure 4 ‣ 4.2.1 ViT-S ImageNet Classification ‣ 4.2 Image Model Experiments ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>4</span></a>
+                  reveal an interesting interaction between NOBLE and augmentation. With standard Mixup/CutMix
+                  augmentation, NOBLE provides a modest improvement (1.6% lower train loss). However, <span>without
+                    Mixup/CutMix, NOBLE’s benefit is more pronounced (5.0% lower train loss)</span>, suggesting that the
+                  aggressive label smoothing from these augmentations partially interferes with NOBLE’s fitting
+                  capabilities.</p>
+              </div>
+              <figure>
+                <figcaption><span>Table 3: </span>ViT-S ImageNet-1k classification results. NOBLE benefits training when
+                  Mixup/CutMix augmentation is disabled.</figcaption>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Configuration</th>
+                      <th>Mixup/CutMix</th>
+                      <th>Train Loss</th>
+                      <th>Top-1 Acc.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <th>Baseline</th>
+                      <td>✓</td>
+                      <td>2.462</td>
+                      <td>74.40%</td>
+                    </tr>
+                    <tr>
+                      <th>NOBLE+CosNet (r=64)</th>
+                      <td>✓</td>
+                      <td>2.423</td>
+                      <td>74.51%</td>
+                    </tr>
+                    <tr>
+                      <th>Baseline</th>
+                      <td>×</td>
+                      <td>0.622</td>
+                      <td>67.17%</td>
+                    </tr>
+                    <tr>
+                      <th>NOBLE+CosNet (r=64)</th>
+                      <td>×</td>
+                      <td>0.591</td>
+                      <td>67.31%</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </figure>
+              <figure><img alt="Refer to caption" />
+                <figcaption><span>Figure 4: </span>ViT-S training loss and validation accuracy on ImageNet-1k (second
+                  half of training shown). <span>Left:</span> Training loss. Without Mixup/CutMix, NOBLE achieves 5%
+                  lower training loss. Meanwhile when training with Mixup/CutMix, it is not clear that NOBLE provides
+                  any benefit. <span>Right:</span> Validation accuracy. Mixup/CutMix significantly boosts accuracy (67%
+                  <math alttext="\rightarrow">
+                    <semantics>
+                      <mo>→</mo>
+                      <annotation>\rightarrow</annotation>
+                    </semantics>
+                  </math> 74%), NOBLE does not provide much improvement in either condition.</figcaption>
+              </figure>
+            </section>
+            <section>
+              <h4>
+                <span>4.2.2 </span>Autoregressive Image Token Modeling
+              </h4>
+              <div>
+                <p><span>Setup.</span> We train an autoregressive transformer on discrete image tokens, analogous to LLM
+                  training on text tokens. Images are first encoded into discrete tokens using a pretrained
+                  VQGAN <cite>(Esser<span> et al.</span>, <a href="#bib.bib38"
+                      title="Taming transformers for high-resolution image synthesis">2021</a>)</cite>, then we train a
+                  causal transformer to predict tokens autoregressively (next-token prediction):</p>
+                <ul>
+                  <li>
+                    <span>•</span>
+                    <div>
+                      <p>Architecture: depth 12, width 1024, 8 heads (identical to base LLM)</p>
+                    </div>
+                  </li>
+                  <li>
+                    <span>•</span>
+                    <div>
+                      <p>Tokenizer: amused-512 VQGAN with 8192 codebook, 1024 tokens per 512<math alttext="\times">
+                          <semantics>
+                            <mo>×</mo>
+                            <annotation>\times</annotation>
+                          </semantics>
+                        </math>512 image (32<math alttext="\times">
+                          <semantics>
+                            <mo>×</mo>
+                            <annotation>\times</annotation>
+                          </semantics>
+                        </math>32 grid)</p>
+                    </div>
+                  </li>
+                  <li>
+                    <span>•</span>
+                    <div>
+                      <p>Positional encoding: 2D RoPE (analogous to 1D RoPE for text)</p>
+                    </div>
+                  </li>
+                  <li>
+                    <span>•</span>
+                    <div>
+                      <p>Attention: Causal (raster-scan token order)</p>
+                    </div>
+                  </li>
+                  <li>
+                    <span>•</span>
+                    <div>
+                      <p>Training: batch 64, lr <math alttext="3\times 10^{-4}">
+                          <semantics>
+                            <mrow>
+                              <mn>3</mn>
+                              <mo>×</mo>
+                              <msup>
+                                <mn>10</mn>
+                                <mrow>
+                                  <mo>−</mo>
+                                  <mn>4</mn>
+                                </mrow>
+                              </msup>
+                            </mrow>
+                            <annotation>3\times 10^{-4}</annotation>
+                          </semantics>
+                        </math>, <math alttext="\beta_{1}=0.9">
+                          <semantics>
+                            <mrow>
+                              <msub>
+                                <mi>β</mi>
+                                <mn>1</mn>
+                              </msub>
+                              <mo>=</mo>
+                              <mn>0.9</mn>
+                            </mrow>
+                            <annotation>\beta_{1}=0.9</annotation>
+                          </semantics>
+                        </math>, <math alttext="\beta_{2}=0.98">
+                          <semantics>
+                            <mrow>
+                              <msub>
+                                <mi>β</mi>
+                                <mn>2</mn>
+                              </msub>
+                              <mo>=</mo>
+                              <mn>0.98</mn>
+                            </mrow>
+                            <annotation>\beta_{2}=0.98</annotation>
+                          </semantics>
+                        </math>, weight decay 0.01, 250k steps</p>
+                    </div>
+                  </li>
+                  <li>
+                    <span>•</span>
+                    <div>
+                      <p>Regularization: None (no dropout, no augmentation)</p>
+                    </div>
+                  </li>
+                  <li>
+                    <span>•</span>
+                    <div>
+                      <p>Class conditioning: Prepended class embedding</p>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <p><span>Results.</span> Table <a href="#S4.T4"
+                    title="Table 4 ‣ 4.2.2 Autoregressive Image Token Modeling ‣ 4.2 Image Model Experiments ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>4</span></a>
+                  shows that NOBLE improves autoregressive image token modeling, achieving lower eval loss than
+                  baseline. This setup is structurally identical to LLM pretraining (next-token prediction with
+                  cross-entropy loss), differing only in the token vocabulary (discrete image codes vs. text BPE
+                  tokens). Combined with our ViT results (which show improvement when Mixup/CutMix is disabled), this
+                  demonstrates that NOBLE benefits both language and image token prediction when aggressive augmentation
+                  is not used.</p>
+              </div>
+              <figure>
+                <figcaption><span>Table 4: </span>Autoregressive image token modeling on ImageNet. NOBLE improves
+                  next-token prediction on discrete image tokens, matching the pattern observed for language models.
+                </figcaption>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Configuration</th>
+                      <th>Rank</th>
+                      <th>Eval Loss</th>
+                      <th>
+                        <math alttext="\Delta">
+                          <semantics>
+                            <mi>Δ</mi>
+                            <annotation>\Delta</annotation>
+                          </semantics>
+                        </math> Loss
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <th>Baseline</th>
+                      <th>–</th>
+                      <td>6.723</td>
+                      <td>–</td>
+                    </tr>
+                    <tr>
+                      <th>NOBLE+CosNet</th>
+                      <th>64</th>
+                      <td>6.699</td>
+                      <td>–0.024</td>
+                    </tr>
+                    <tr>
+                      <th>NOBLE+CosNet</th>
+                      <th>128</th>
+                      <td>6.690</td>
+                      <td>–0.033</td>
+                    </tr>
+                    <tr>
+                      <th>NOBLE+CosNet</th>
+                      <th>256</th>
+                      <td>6.682</td>
+                      <td>–0.041</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </figure>
+            </section>
+          </section>
+          <section>
+            <h3>
+              <span>4.3 </span>Summary
+            </h3>
+            <div>
+              <p>The pattern that emerges is clear: <span>NOBLE improves training in low noise generative and
+                  classification tasks</span>. The only configuration where NOBLE shows no improvement is ViT with
+                Mixup/CutMix enabled. When we disable these augmentations, ViT also benefits from NOBLE in train loss,
+                though worsens eval loss as it contributes to overfitting.</p>
+            </div>
+          </section>
+          <section>
+            <h3>
+              <span>4.4 </span>Ablation Studies
+            </h3>
+            <div>
+              <p>We conduct ablations on the base language model (depth 12, width 1024, batch 32) trained for 150k
+                steps.</p>
+            </div>
+            <section>
+              <h5>Activation Function and Depth Comparison.</h5>
+              <div>
+                <p>Table <a href="#S4.T5"
+                    title="Table 5 ‣ Activation Function and Depth Comparison. ‣ 4.4 Ablation Studies ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>5</span></a>
+                  and Figure <a href="#S4.F5"
+                    title="Figure 5 ‣ Activation Function and Depth Comparison. ‣ 4.4 Ablation Studies ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>5</span></a>
+                  compare different bottleneck activations, both as single activations and with a middle mixing
+                  projection <math alttext="M">
+                    <semantics>
+                      <mi>M</mi>
+                      <annotation>M</annotation>
+                    </semantics>
+                  </math> (2-layer).</p>
+              </div>
+              <div>
+                <p>ReLU-like activations (LeakyReLU, GELU) provide moderate improvement. Tanh shows minimal benefit as a
+                  single activation but improves with the middle projection. Cosine consistently achieves the best
+                  results across both configurations. The 2-layer CosNet (with <math alttext="M">
+                    <semantics>
+                      <mi>M</mi>
+                      <annotation>M</annotation>
+                    </semantics>
+                  </math>) provides the best overall performance, while extending to 3 layers yields no additional
+                  improvement.</p>
+              </div>
+              <figure>
+                <figcaption><span>Table 5: </span>Ablation on bottleneck activation function (rank 64, base LLM, 150k
+                  steps).</figcaption>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Activation</th>
+                      <th>Symmetric</th>
+                      <th>Single Layer</th>
+                      <th>2-Layer (with <math alttext="M">
+                          <semantics>
+                            <mi>M</mi>
+                            <annotation>M</annotation>
+                          </semantics>
+                        </math>)</th>
+                      <th>
+                        <math alttext="\Delta">
+                          <semantics>
+                            <mi>Δ</mi>
+                            <annotation>\Delta</annotation>
+                          </semantics>
+                        </math> from Baseline
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <th>Baseline</th>
+                      <td>–</td>
+                      <td>2.971</td>
+                      <td>–</td>
+                      <td>–</td>
+                    </tr>
+                    <tr>
+                      <th>Tanh</th>
+                      <td>✓</td>
+                      <td>2.968</td>
+                      <td>2.957</td>
+                      <td>–0.003 / –0.014</td>
+                    </tr>
+                    <tr>
+                      <th>LeakyReLU</th>
+                      <td>×</td>
+                      <td>2.949</td>
+                      <td>2.942</td>
+                      <td>–0.022 / –0.029</td>
+                    </tr>
+                    <tr>
+                      <th>GELU</th>
+                      <td>×</td>
+                      <td>2.948</td>
+                      <td>2.944</td>
+                      <td>–0.023 / –0.027</td>
+                    </tr>
+                    <tr>
+                      <th>Cosine</th>
+                      <td>✓</td>
+                      <td>2.943</td>
+                      <td><span>2.926</span></td>
+                      <td>–0.028 / <span>–0.045</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <th>Cosine (3-layer)</th>
+                      <td>✓</td>
+                      <td>–</td>
+                      <td>2.927</td>
+                      <td>–0.044</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </figure>
+              <figure><img alt="Refer to caption" />
+                <figcaption><span>Figure 5: </span><span>Activation function comparison.</span> Eval loss curves for
+                  different bottleneck activations (rank 64, 150k steps). CosNet (2-layer cosine, red) achieves the
+                  lowest loss, followed by single cosine and 3-layer CosNet. ReLU-like activations (GELU, LeakyReLU)
+                  provide moderate improvement, while tanh shows minimal benefit. First 20% of training truncated for
+                  clarity.</figcaption>
+              </figure>
+            </section>
+          </section>
+        </section>
+        <section>
+          <h2>
+            <span>5 </span>Discussion
+          </h2>
+          <section>
+            <h5>Why Cosine Activations?</h5>
+            <div>
+              <p>We evaluated several activation functions before settling on cosine (see Table <a href="#S4.T5"
+                  title="Table 5 ‣ Activation Function and Depth Comparison. ‣ 4.4 Ablation Studies ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>5</span></a>).
+                ReLU-like activations (ReLU, GELU) showed lower magnitudes of improvement. We hypothesize this relates
+                to symmetry and the low-rank setting: ReLU-likes are asymmetric around zero, which may be problematic
+                when projecting to <em>smaller</em> dimensions. In standard MLPs, we project to <em>higher</em>
+                dimensions before applying ReLU, which acts as a selective gate, blocking certain activations and
+                “deleting” information by collapsing it to zero. This filtering is often desirable for compression. In a
+                low-rank bottleneck, this gating behavior may be counterproductive since we cannot afford to “waste”
+                dimensions.</p>
+            </div>
+            <div>
+              <p>Symmetric activations like <math alttext="\tanh">
+                  <semantics>
+                    <mi>tanh</mi>
+                    <annotation>\tanh</annotation>
+                  </semantics>
+                </math> address the asymmetry issue but suffer from saturation: much of the input range collapses to
+                values near <math alttext="\pm 1">
+                  <semantics>
+                    <mrow>
+                      <mo>±</mo>
+                      <mn>1</mn>
+                    </mrow>
+                    <annotation>\pm 1</annotation>
+                  </semantics>
+                </math>, losing gradient signal. Cosine is symmetric around zero, bounded (avoiding exploding
+                activations), and crucially <em>non-saturating</em>. Its derivative <math alttext="-\sin(x)">
+                  <semantics>
+                    <mrow>
+                      <mo>−</mo>
+                      <mrow>
+                        <mi>sin</mi>
+                        <mo>⁡</mo>
+                        <mrow>
+                          <mo>(</mo>
+                          <mi>x</mi>
+                          <mo>)</mo>
+                        </mrow>
+                      </mrow>
+                    </mrow>
+                    <annotation>-\sin(x)</annotation>
+                  </semantics>
+                </math> oscillates rather than vanishing for large inputs.</p>
+            </div>
+            <div>
+              <p>Notably, periodic activations like sine and cosine are among the <em>most nonlinear</em> options
+                available, capable of aggressively fitting complex functions. This property underlies their success in
+                SIREN <cite>(Sitzmann<span> et al.</span>, <a href="#bib.bib15"
+                    title="Implicit neural representations with periodic activation functions">2020</a>)</cite> and
+                NeRF <cite>(Mildenhall<span> et al.</span>, <a href="#bib.bib14"
+                    title="Nerf: representing scenes as neural radiance fields for view synthesis">2020</a>)</cite>,
+                where the goal is to overfit neural networks to specific signals or scenes. Empirical experiments on
+                learning space-filling curves <cite>(Smith, <a href="#bib.bib27"
+                    title="Learning space filling curves with autoencoders">2024</a>)</cite> further demonstrate that
+                sinusoidal activations yield the strongest ability to densely cover output spaces. By pairing the main
+                dense linear layer with a cosine-based bypass, we provide a branch that is maximally
+                <em>antithetical</em> to the linear pathway, potentially offering a unique nonlinear delta that cannot
+                be achieved by any modification to the linear weights alone. In other words, the linear layer
+                approximates the dominant, smoother low-frequency components, while the cosine-based bypass captures
+                residual high-frequency variations with smaller amplitudes.</p>
+            </div>
+          </section>
+          <section>
+            <h5>CosNet Architecture Evolution.</h5>
+            <div>
+              <p>Our initial experiments used a single cosine activation without the middle projection <math
+                  alttext="M">
+                  <semantics>
+                    <mi>M</mi>
+                    <annotation>M</annotation>
+                  </semantics>
+                </math>. Even in this simple form, cosine outperformed other activations. We then explored whether
+                adding depth to the bottleneck could further improve performance. Adding the mixing matrix <math
+                  alttext="M\in\mathbb{R}^{r\times r}">
+                  <semantics>
+                    <mrow>
+                      <mi>M</mi>
+                      <mo>∈</mo>
+                      <msup>
+                        <mi>ℝ</mi>
+                        <mrow>
+                          <mi>r</mi>
+                          <mo>×</mo>
+                          <mi>r</mi>
+                        </mrow>
+                      </msup>
+                    </mrow>
+                    <annotation>M\in\mathbb{R}^{r\times r}</annotation>
+                  </semantics>
+                </math> between two cosine activations (the CosNet architecture) yielded additional gains (see Table <a
+                  href="#S4.T5"
+                  title="Table 5 ‣ Activation Function and Depth Comparison. ‣ 4.4 Ablation Studies ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>5</span></a>).
+                Extending to three or more layers provided no further improvement but also did not hurt, suggesting two
+                layers capture the useful complexity for this setting.</p>
+            </div>
+          </section>
+          <section>
+            <h5>Function Smoothness and Regularization</h5>
+            <div>
+              <p>To understand NOBLE’s interaction with augmentation, it helps to formalize what <span>smoothness</span>
+                means for a learned function. A function <math alttext="f">
+                  <semantics>
+                    <mi>f</mi>
+                    <annotation>f</annotation>
+                  </semantics>
+                </math> is <math alttext="L">
+                  <semantics>
+                    <mi>L</mi>
+                    <annotation>L</annotation>
+                  </semantics>
+                </math>-Lipschitz if <math alttext="\|f(x)-f(y)\|\leq L\|x-y\|">
+                  <semantics>
+                    <mrow>
+                      <mrow>
+                        <mo>‖</mo>
+                        <mrow>
+                          <mrow>
+                            <mi>f</mi>
+                            <mo>​</mo>
+                            <mrow>
+                              <mo>(</mo>
+                              <mi>x</mi>
+                              <mo>)</mo>
+                            </mrow>
+                          </mrow>
+                          <mo>−</mo>
+                          <mrow>
+                            <mi>f</mi>
+                            <mo>​</mo>
+                            <mrow>
+                              <mo>(</mo>
+                              <mi>y</mi>
+                              <mo>)</mo>
+                            </mrow>
+                          </mrow>
+                        </mrow>
+                        <mo>‖</mo>
+                      </mrow>
+                      <mo>≤</mo>
+                      <mrow>
+                        <mi>L</mi>
+                        <mo>​</mo>
+                        <mrow>
+                          <mo>‖</mo>
+                          <mrow>
+                            <mi>x</mi>
+                            <mo>−</mo>
+                            <mi>y</mi>
+                          </mrow>
+                          <mo>‖</mo>
+                        </mrow>
+                      </mrow>
+                    </mrow>
+                    <annotation>\|f(x)-f(y)\|\leq L\|x-y\|</annotation>
+                  </semantics>
+                </math> for all <math alttext="x,y">
+                  <semantics>
+                    <mrow>
+                      <mi>x</mi>
+                      <mo>,</mo>
+                      <mi>y</mi>
+                    </mrow>
+                    <annotation>x,y</annotation>
+                  </semantics>
+                </math>, bounding how rapidly outputs can change with respect to inputs. The related notion of <math
+                  alttext="L">
+                  <semantics>
+                    <mi>L</mi>
+                    <annotation>L</annotation>
+                  </semantics>
+                </math>-smooth gradients requires <math alttext="\|\nabla f(x)-\nabla f(y)\|\leq L\|x-y\|">
+                  <semantics>
+                    <mrow>
+                      <mrow>
+                        <mo>‖</mo>
+                        <mrow>
+                          <mrow>
+                            <mrow>
+                              <mo>∇</mo>
+                              <mi>f</mi>
+                            </mrow>
+                            <mo>​</mo>
+                            <mrow>
+                              <mo>(</mo>
+                              <mi>x</mi>
+                              <mo>)</mo>
+                            </mrow>
+                          </mrow>
+                          <mo>−</mo>
+                          <mrow>
+                            <mrow>
+                              <mo>∇</mo>
+                              <mi>f</mi>
+                            </mrow>
+                            <mo>​</mo>
+                            <mrow>
+                              <mo>(</mo>
+                              <mi>y</mi>
+                              <mo>)</mo>
+                            </mrow>
+                          </mrow>
+                        </mrow>
+                        <mo>‖</mo>
+                      </mrow>
+                      <mo>≤</mo>
+                      <mrow>
+                        <mi>L</mi>
+                        <mo>​</mo>
+                        <mrow>
+                          <mo>‖</mo>
+                          <mrow>
+                            <mi>x</mi>
+                            <mo>−</mo>
+                            <mi>y</mi>
+                          </mrow>
+                          <mo>‖</mo>
+                        </mrow>
+                      </mrow>
+                    </mrow>
+                    <annotation>\|\nabla f(x)-\nabla f(y)\|\leq L\|x-y\|</annotation>
+                  </semantics>
+                </math> <cite>(Nesterov, <a href="#bib.bib34"
+                    title="Introductory lectures on convex optimization: a basic course">2004</a>)</cite>, bounding the
+                rate of change of the gradient itself, i.e., constraining curvature. A function with a small gradient
+                Lipschitz constant cannot exhibit sharp bends or rapid directional changes. In the frequency domain,
+                this corresponds to energy concentrated in low-frequency Fourier components, while high-frequency
+                components encode rapid oscillations, sharp transitions, and fine-grained local
+                structure <cite>(Rahaman<span> et al.</span>, <a href="#bib.bib31"
+                    title="On the spectral bias of neural networks">2019</a>)</cite>.</p>
+            </div>
+            <div>
+              <p>Many standard regularization techniques implicitly or explicitly encourage such smoothness. Weight
+                decay penalizes large weights, limiting each layer’s Lipschitz constant and thus the composed function’s
+                capacity for rapid variation. Dropout averages over an implicit ensemble of sub-networks, producing
+                predictions smoother than any individual member. Label smoothing <cite>(Szegedy<span> et al.</span>, <a
+                    href="#bib.bib36" title="Rethinking the inception architecture for computer vision">2016</a>)</cite>
+                softens targets, discouraging sharp decision boundaries. Spectral normalization <cite>(Miyato<span> et
+                    al.</span>, <a href="#bib.bib35"
+                    title="Spectral normalization for generative adversarial networks">2018</a>)</cite> directly bounds
+                layer-wise Lipschitz constants. Gaussian noise injection is equivalent to Tikhonov
+                regularization <cite>(Bishop, <a href="#bib.bib29"
+                    title="Training with noise is equivalent to tikhonov regularization">1995</a>; Seghouane<span> et
+                    al.</span>, <a href="#bib.bib37"
+                    title="Regularizing the effect of input noise injection in feedforward neural networks training">2004</a>)</cite>,
+                explicitly penalizing high-frequency components <cite>(Camuto<span> et al.</span>, <a href="#bib.bib30"
+                    title="Explicit regularisation in gaussian noise injections">2020</a>)</cite>.
+                Mixup <cite>(Zhang<span> et al.</span>, <a href="#bib.bib28"
+                    title="Mixup: beyond empirical risk minimization">2018</a>)</cite> and CutMix enforce that the
+                network interpolates linearly between training points, imposing a direct smoothness constraint. These
+                techniques are effective in part because neural networks exhibit a <em>spectral bias</em>: they
+                naturally learn low-frequency components first and fit high-frequency details only later in training, if
+                at all <cite>(Rahaman<span> et al.</span>, <a href="#bib.bib31"
+                    title="On the spectral bias of neural networks">2019</a>)</cite>. Smoothness regularization
+                amplifies this inductive bias to improve generalization.</p>
+            </div>
+          </section>
+          <section>
+            <h5>NOBLE as a High-Frequency Residual Learner</h5>
+            <div>
+              <p>The target function generally contains both smooth, low-frequency components, the coarse global trend,
+                and non-smooth, high-frequency components: fine-grained variations characterized by large higher-order
+                derivatives, sharp bends, and rapid local changes. We hypothesize that NOBLE provides a <em>division of
+                  labor</em>: the main linear pathway <math alttext="xW">
+                  <semantics>
+                    <mrow>
+                      <mi>x</mi>
+                      <mo>​</mo>
+                      <mi>W</mi>
+                    </mrow>
+                    <annotation>xW</annotation>
+                  </semantics>
+                </math> captures the dominant smooth component, while the cosine bypass specializes in the high
+                frequency residual that is not well-approximated by a smooth function. Cosine activations are naturally
+                suited to this role because their learnable frequency parameters <math alttext="\omega">
+                  <semantics>
+                    <mi>ω</mi>
+                    <annotation>\omega</annotation>
+                  </semantics>
+                </math> allow representation of arbitrary frequencies, and periodic activations are among the most
+                aggressive function fitters available <cite>(Sitzmann<span> et al.</span>, <a href="#bib.bib15"
+                    title="Implicit neural representations with periodic activation functions">2020</a>)</cite>.</p>
+            </div>
+            <div>
+              <p>This framing explains why Mixup and CutMix specifically interfere with NOBLE. These augmentations do
+                not merely encourage smoothness as a regularizer on the model. They modify the train-time target
+                function itself by blending inputs and labels, making it inherently smoother <cite>(Zhang<span> et
+                    al.</span>, <a href="#bib.bib28" title="Mixup: beyond empirical risk minimization">2018</a>)</cite>.
+                The high frequency residual that NOBLE’s cosine branch is designed to capture is attenuated or removed.
+                It is not that NOBLE fails, but that the augmentation eliminates the very structure NOBLE is designed to
+                exploit. This is consistent with our observation that NOBLE improves training loss on every task except
+                ViT ImageNet classification with Mixup/CutMix enabled, and even then, ViT image, does benefit when these
+                augmentations are removed.</p>
+            </div>
+            <div>
+              <p>More broadly, practitioners should be aware that any regularization strategy that aggressively
+                encourages smooth fits may reduce NOBLE’s benefits by suppressing the high frequency signal the cosine
+                branch learns. Tasks and training regimes that preserve fine-grained structure in the target function
+                are where NOBLE provides the greatest advantage.</p>
+            </div>
+          </section>
+          <section>
+            <h5>Relationship to Standard LoRA and PEFT</h5>
+            <div>
+              <p>Despite the structural similarity, NOBLE serves a fundamentally different purpose than LoRA and other
+                PEFT methods. LoRA was designed to efficiently adapt <em>frozen pretrained models</em> to downstream
+                tasks by learning low-rank corrections. NOBLE, in contrast, is an <em>architectural augmentation</em>
+                for pretraining. The branch is a permanent part of the model trained from scratch, not an adapter
+                attached to frozen weights. Where LoRA learns <em>corrections</em>, NOBLE learns <em>complementary
+                  features</em> that the main linear layer cannot represent.</p>
+            </div>
+          </section>
+          <section>
+            <h5>Computational Tradeoffs</h5>
+            <div>
+              <p>At rank 64–128, NOBLE adds 4–12% parameters and 7–12% step time overhead, but provides 1.26–1.35<math
+                  alttext="\times">
+                  <semantics>
+                    <mo>×</mo>
+                    <annotation>\times</annotation>
+                  </semantics>
+                </math> step speedup, yielding 1.17–1.21<math alttext="\times">
+                  <semantics>
+                    <mo>×</mo>
+                    <annotation>\times</annotation>
+                  </semantics>
+                </math> net wallclock speedup. This represents a favorable tradeoff: practitioners can reach target
+                performance significantly faster despite the per-step cost.</p>
+            </div>
+          </section>
+          <section>
+            <h5>Future Directions</h5>
+            <div>
+              <p>We hope this work inspires further exploration into nonlinear branches for neural network
+                architectures. The principle of combining a linear backbone with nonlinear residual branches for more
+                granular fitting may extend beyond low-rank adaptations to other hybrid function parameterizations.
+                Understanding when and why different nonlinearities complement linear pathways remains an open and
+                promising research direction.</p>
+            </div>
+          </section>
+        </section>
+        <section>
+          <h2>
+            <span>6 </span>Limitations
+          </h2>
+          <div>
+            <ul>
+              <li>
+                <span>•</span>
+                <div>
+                  <p><span>Inference overhead</span>: Unlike adapter methods that can be merged post-training, NOBLE
+                    adds permanent inference cost (6–12% FLOPs). This may be undesirable for inference-constrained
+                    deployments.</p>
+                </div>
+              </li>
+              <li>
+                <span>•</span>
+                <div>
+                  <p><span>Augmentation interaction</span>: We identify that Mixup/CutMix interferes with NOBLE, but do
+                    not fully characterize which augmentation strategies are compatible.</p>
+                </div>
+              </li>
+              <li>
+                <span>•</span>
+                <div>
+                  <p><span>Limited vision coverage</span>: We test only ViT classification and autoregressive image
+                    token modeling. Other vision tasks (detection, segmentation) might behave differently.</p>
+                </div>
+              </li>
+              <li>
+                <span>•</span>
+                <div>
+                  <p><span>Scale</span>: Our largest model is 1.5B parameters. The observed effects might change at
+                    larger scales.</p>
+                </div>
+              </li>
+              <li>
+                <span>•</span>
+                <div>
+                  <p><span>Tokenizer dependence</span>: Our image token results depend on the specific VQGAN tokenizer
+                    (amused-512). Other visual tokenizers might yield different results.</p>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </section>
+        <section>
+          <h2>
+            <span>7 </span>Conclusion
+          </h2>
+          <div>
+            <p>We introduced NOBLE (Nonlinear lOw-rank Branch for Linear Enhancement), a family of nonlinear low-rank
+              branches for transformer linear layers. Among several activation functions, we find CosNet, a two-layer
+              cosine nonlinearity, performs best, achieving <span>up to 1.47<math alttext="\times">
+                  <semantics>
+                    <mo>×</mo>
+                    <annotation>\times</annotation>
+                  </semantics>
+                </math> step speedup</span>. With 4–24% additional parameters and 7–21% per-step overhead, NOBLE reduces
+              steps to reach baseline loss by 21–32%, yielding <span>net wallclock speedups of 1.17–1.22<math
+                  alttext="\times">
+                  <semantics>
+                    <mo>×</mo>
+                    <annotation>\times</annotation>
+                  </semantics>
+                </math></span>. This makes it a practical method to accelerate pretraining with minimal added
+              complexity.</p>
+          </div>
+          <div>
+            <p>Our experiments demonstrate that NOBLE benefits a broad range of tasks: LLM autoregressive modeling, BERT
+              masked language modeling, autoregressive image token modeling, and ViT image classification. The one
+              caveat is an interaction with Mixup/CutMix augmentation: when these aggressive augmentations are used,
+              NOBLE’s benefits are reduced. When disabled, ViT also benefits from NOBLE, suggesting the conflict is with
+              the augmentation strategy rather than the task or modality.</p>
+          </div>
+        </section>
+        <section>
+          <h2>References</h2>
+          <ul>
+            <li>
+              <span>C. M. Bishop (1995)</span>
+              <span><span>Training with noise is equivalent to tikhonov regularization</span>.
+              </span>
+              <span><span>Neural Computation</span> <span>7</span> (<span>1</span>), <span> pp. 108–116</span>.
+              </span>
+              <span>Cited by: <a href="#S5.SS0.SSS0.Px3.p2.1"
+                  title="Function Smoothness and Regularization ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G.
+                Sastry, A. Askell, <span>et al.</span> (2020)</span>
+              <span><span>Language models are few-shot learners</span>.
+              </span>
+              <span><span>Advances in neural information processing systems</span> <span>33</span>, <span>
+                  pp. 1877–1901</span>.
+              </span>
+              <span>Cited by: <a href="#S1.p1.1"
+                  title="1 Introduction ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§1</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>A. Camuto, M. Willetts, U. Sherwin, S. J. Roberts, and C. C. Holmes (2020)</span>
+              <span><span>Explicit regularisation in gaussian noise injections</span>.
+              </span>
+              <span>In <span>Advances in Neural Information Processing Systems</span>,
+              </span>
+              <span>Vol. <span>33</span>, <span> pp. 16603–16614</span>.
+              </span>
+              <span>Cited by: <a href="#S5.SS0.SSS0.Px3.p2.1"
+                  title="Function Smoothness and Regularization ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>K. Choromanski, V. Likhosherstov, D. Dohan, X. Song, A. Gane, T. Sarlos, P. Hawkins, J. Davis, A.
+                Mohiuddin, L. Kaiser, <span>et al.</span> (2020)</span>
+              <span><span>Rethinking attention with performers</span>.
+              </span>
+              <span>In <span>International Conference on Learning Representations</span>,
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px3.p1.1"
+                  title="Nonlinear Projections in Attention. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>T. Dettmers, A. Pagnoni, A. Holtzman, and L. Zettlemoyer (2023)</span>
+              <span><span>Qlora: efficient finetuning of quantized llms</span>.
+              </span>
+              <span><span>arXiv preprint arXiv:2305.14314</span>.
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px1.p1.1"
+                  title="Low-Rank Adaptation and PEFT. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>H. Dong, W. Zhu, G. Song, and L. Wang (2024)</span>
+              <span><span>AuroRA: breaking low-rank bottleneck of lora with nonlinear mapping</span>.
+              </span>
+              <span><span>OpenReview (under review)</span>.
+              </span>
+              <span>Note: <span>Paper ID: 2hgHyoyVWj</span>
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px2.p1.1"
+                  title="Nonlinear Extensions of LoRA. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M.
+                Minderer, G. Heigold, S. Gelly, <span>et al.</span> (2020)</span>
+              <span><span>An image is worth 16x16 words: transformers for image recognition at scale</span>.
+              </span>
+              <span><span>arXiv preprint arXiv:2010.11929</span>.
+              </span>
+              <span>Cited by: <a href="#S1.p1.1"
+                  title="1 Introduction ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§1</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>P. Esser, R. Rombach, and B. Ommer (2021)</span>
+              <span><span>Taming transformers for high-resolution image synthesis</span>.
+              </span>
+              <span>In <span>Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition</span>,
+              </span>
+              <span><span> pp. 12873–12883</span>.
+              </span>
+              <span>Cited by: <a href="#S4.SS2.SSS2.p1.1"
+                  title="4.2.2 Autoregressive Image Token Modeling ‣ 4.2 Image Model Experiments ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§4.2.2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>W. Fedus, B. Zoph, and N. Shazeer (2022)</span>
+              <span><span>Switch transformers: scaling to trillion parameter models with simple and efficient
+                  sparsity</span>.
+              </span>
+              <span><span>The Journal of Machine Learning Research</span> <span>23</span> (<span>1</span>), <span>
+                  pp. 5232–5270</span>.
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px4.p1.1"
+                  title="Mixture of Experts. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>A. Gokaslan and V. Cohen (2019)</span>
+              <span><span>OpenWebText corpus</span>.
+              </span>
+              <span>Note: <span><a href="http://Skylion007.github.io/OpenWebTextCorpus"
+                    title="">http://Skylion007.github.io/OpenWebTextCorpus</a></span>
+              </span>
+              <span>Cited by: <a href="#S4.SS1.SSS1.p1.1"
+                  title="4.1.1 Autoregressive LLM Pretraining ‣ 4.1 Language Model Experiments ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§4.1.1</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>S. Hayou, N. Ghosh, and B. Yu (2024)</span>
+              <span><span>LoRA+: efficient low rank adaptation of large models</span>.
+              </span>
+              <span><span>arXiv preprint arXiv:2402.12354</span>.
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px1.p1.1"
+                  title="Low-Rank Adaptation and PEFT. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>N. Houlsby, A. Giurgiu, S. Jastrzebski, B. Morrone, Q. De Laroussilhe, A. Gesmundo, M. Attariyan,
+                and S. Gelly (2019)</span>
+              <span><span>Parameter-efficient transfer learning for nlp</span>.
+              </span>
+              <span>In <span>International Conference on Machine Learning</span>,
+              </span>
+              <span><span> pp. 2790–2799</span>.
+              </span>
+              <span>Cited by: <a href="#S1.I1.i1.p1.1"
+                  title="In 1 Introduction ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>item 1</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen (2021)</span>
+              <span><span>Lora: low-rank adaptation of large language models</span>.
+              </span>
+              <span><span>arXiv preprint arXiv:2106.09685</span>.
+              </span>
+              <span>Cited by: <a href="#S1.p2.2"
+                  title="1 Introduction ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§1</span></a>,
+                <a href="#S2.SS0.SSS0.Px1.p1.1"
+                  title="Low-Rank Adaptation and PEFT. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>A. Katharopoulos, A. Vyas, N. Pappas, and F. Fleuret (2020)</span>
+              <span><span>Transformers are rnns: fast autoregressive transformers with linear attention</span>.
+              </span>
+              <span>In <span>International conference on machine learning</span>,
+              </span>
+              <span><span> pp. 5156–5165</span>.
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px3.p1.1"
+                  title="Nonlinear Projections in Attention. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>S. Liu, C. Wang, H. Yin, P. Molchanov, Y. F. Wang, K. Cheng, and M. Chen (2024)</span>
+              <span><span>Dora: weight-decomposed low-rank adaptation</span>.
+              </span>
+              <span><span>arXiv preprint arXiv:2402.09353</span>.
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px1.p1.1"
+                  title="Low-Rank Adaptation and PEFT. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>B. Mildenhall, P. P. Srinivasan, M. Tancik, J. T. Barron, R. Ramamoorthi, and R. Ng (2020)</span>
+              <span><span>Nerf: representing scenes as neural radiance fields for view synthesis</span>.
+              </span>
+              <span>In <span>European conference on computer vision</span>,
+              </span>
+              <span><span> pp. 405–421</span>.
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px5.p1.1"
+                  title="Periodic Activations. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>,
+                <a href="#S5.SS0.SSS0.Px1.p3.1"
+                  title="Why Cosine Activations? ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>T. Miyato, T. Kataoka, M. Koyama, and Y. Yoshida (2018)</span>
+              <span><span>Spectral normalization for generative adversarial networks</span>.
+              </span>
+              <span>In <span>International Conference on Learning Representations</span>,
+              </span>
+              <span>Cited by: <a href="#S5.SS0.SSS0.Px3.p2.1"
+                  title="Function Smoothness and Regularization ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>Y. Nesterov (2004)</span>
+              <span><span>Introductory lectures on convex optimization: a basic course</span>.
+              </span>
+              <span><span>Applied Optimization</span>, Vol. <span>87</span>, <span>Springer</span>.
+              </span>
+              <span>Cited by: <a href="#S5.SS0.SSS0.Px3.p1.6"
+                  title="Function Smoothness and Regularization ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>N. Rahaman, A. Baratin, D. Arpit, F. Draxler, M. Lin, F. Hamprecht, Y. Bengio, and A. Courville
+                (2019)</span>
+              <span><span>On the spectral bias of neural networks</span>.
+              </span>
+              <span>In <span>International Conference on Machine Learning</span>,
+              </span>
+              <span><span> pp. 5301–5310</span>.
+              </span>
+              <span>Cited by: <a href="#S5.SS0.SSS0.Px3.p1.6"
+                  title="Function Smoothness and Regularization ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>,
+                <a href="#S5.SS0.SSS0.Px3.p2.1"
+                  title="Function Smoothness and Regularization ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>A. Seghouane, Y. Moudden, and G. Fleury (2004)</span>
+              <span><span>Regularizing the effect of input noise injection in feedforward neural networks
+                  training</span>.
+              </span>
+              <span><span>Neural Computing and Applications</span> <span>13</span> (<span>3</span>), <span>
+                  pp. 248–254</span>.
+              </span>
+              <span>Cited by: <a href="#S5.SS0.SSS0.Px3.p2.1"
+                  title="Function Smoothness and Regularization ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean (2017)</span>
+              <span><span>Outrageously large neural networks: the sparsely-gated mixture-of-experts layer</span>.
+              </span>
+              <span><span>arXiv preprint arXiv:1701.06538</span>.
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px4.p1.1"
+                  title="Mixture of Experts. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>N. Shazeer (2020)</span>
+              <span><span>Glu variants improve transformer</span>.
+              </span>
+              <span><span>arXiv preprint arXiv:2002.05202</span>.
+              </span>
+              <span>Cited by: <a href="#S4.SS1.SSS1.p1.1"
+                  title="4.1.1 Autoregressive LLM Pretraining ‣ 4.1 Language Model Experiments ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§4.1.1</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>V. Sitzmann, J. Martel, A. Bergman, D. Lindell, and G. Wetzstein (2020)</span>
+              <span><span>Implicit neural representations with periodic activation functions</span>.
+              </span>
+              <span>In <span>Advances in Neural Information Processing Systems</span>,
+              </span>
+              <span>Vol. <span>33</span>, <span> pp. 7462–7473</span>.
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px5.p1.1"
+                  title="Periodic Activations. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>,
+                <a href="#S5.SS0.SSS0.Px1.p3.1"
+                  title="Why Cosine Activations? ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>,
+                <a href="#S5.SS0.SSS0.Px4.p1.2"
+                  title="NOBLE as a High-Frequency Residual Learner ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>E. Smith (2024)</span>
+              <span><span>Learning space filling curves with autoencoders</span>.
+              </span>
+              <span>Note: <span><a
+                    href="https://sweet-hall-e72.notion.site/Learning-Space-Filling-Curves-with-Autoencoders-e39e41ce75894c3a8fecfee0f3bbfb23"
+                    title="">https://sweet-hall-e72.notion.site/Learning-Space-Filling-Curves-with-Autoencoders-e39e41ce75894c3a8fecfee0f3bbfb23</a></span>
+              </span>
+              <span>Cited by: <a href="#S5.SS0.SSS0.Px1.p3.1"
+                  title="Why Cosine Activations? ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>D. So, W. Mańke, H. Liu, Z. Dai, N. Shazeer, and Q. V. Le (2021)</span>
+              <span><span>Primer: searching for efficient transformers for language modeling</span>.
+              </span>
+              <span><span>Advances in Neural Information Processing Systems</span> <span>34</span>, <span>
+                  pp. 11881–11895</span>.
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px3.p1.1"
+                  title="Nonlinear Projections in Attention. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>J. Su, M. Ahmed, Y. Lu, S. Pan, W. Bo, and Y. Liu (2024)</span>
+              <span><span>Roformer: enhanced transformer with rotary position embedding</span>.
+              </span>
+              <span><span>Neurocomputing</span> <span>568</span>, <span> pp. 127063</span>.
+              </span>
+              <span>Cited by: <a href="#S4.SS1.SSS1.p1.1"
+                  title="4.1.1 Autoregressive LLM Pretraining ‣ 4.1 Language Model Experiments ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§4.1.1</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>C. Szegedy, V. Vanhoucke, S. Ioffe, J. Shlens, and Z. Wojna (2016)</span>
+              <span><span>Rethinking the inception architecture for computer vision</span>.
+              </span>
+              <span>In <span>Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition</span>,
+              </span>
+              <span><span> pp. 2818–2826</span>.
+              </span>
+              <span>Cited by: <a href="#S5.SS0.SSS0.Px3.p2.1"
+                  title="Function Smoothness and Regularization ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+                (2017)</span>
+              <span><span>Attention is all you need</span>.
+              </span>
+              <span><span>Advances in neural information processing systems</span> <span>30</span>.
+              </span>
+              <span>Cited by: <a href="#S1.p1.1"
+                  title="1 Introduction ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§1</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>T. Wu, J. Wang, Z. Zhao, and N. Wong (2024)</span>
+              <span><span>Mixture-of-subspaces in low-rank adaptation</span>.
+              </span>
+              <span><span>arXiv preprint arXiv:2406.11909</span>.
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px1.p1.1"
+                  title="Low-Rank Adaptation and PEFT. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>G. Yang, E. J. Hu, I. Babuschkin, S. Sidor, X. Liu, D. Farhi, N. Ryder, J. Pachocki, W. Chen, and J.
+                Gao (2022)</span>
+              <span><span>Tensor programs v: tuning large neural networks via zero-shot hyperparameter transfer</span>.
+              </span>
+              <span>In <span>Advances in Neural Information Processing Systems</span>,
+              </span>
+              <span>Vol. <span>35</span>, <span> pp. 17084–17097</span>.
+              </span>
+              <span>Cited by: <a href="#S1.I1.i3.p1.4"
+                  title="In 1 Introduction ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>item 3</span></a>,
+                <a href="#S3.SS3.SSS0.Px3.p1.4"
+                  title="Learning Rate Scaling. ‣ 3.3 Key Design Choices ‣ 3 Method ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§3.3</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>B. Zhang and R. Sennrich (2019)</span>
+              <span><span>Root mean square layer normalization</span>.
+              </span>
+              <span><span>Advances in Neural Information Processing Systems</span> <span>32</span>.
+              </span>
+              <span>Cited by: <a href="#S4.SS1.SSS1.p1.1"
+                  title="4.1.1 Autoregressive LLM Pretraining ‣ 4.1 Language Model Experiments ‣ 4 Experiments ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§4.1.1</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>H. Zhang, M. Cisse, Y. N. Dauphin, and D. Lopez-Paz (2018)</span>
+              <span><span>Mixup: beyond empirical risk minimization</span>.
+              </span>
+              <span>In <span>International Conference on Learning Representations</span>,
+              </span>
+              <span>Cited by: <a href="#S5.SS0.SSS0.Px3.p2.1"
+                  title="Function Smoothness and Regularization ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>,
+                <a href="#S5.SS0.SSS0.Px4.p2.1"
+                  title="NOBLE as a High-Frequency Residual Learner ‣ 5 Discussion ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§5</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>Q. Zhang, M. Chen, A. Bukharin, P. He, Y. Cheng, W. Chen, and T. Zhao (2023)</span>
+              <span><span>Adalora: adaptive budget allocation for parameter-efficient fine-tuning</span>.
+              </span>
+              <span><span>arXiv preprint arXiv:2303.10512</span>.
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px1.p1.1"
+                  title="Low-Rank Adaptation and PEFT. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+            <li>
+              <span>Y. Zhong, H. Jiang, L. Li, R. Nakada, T. Liu, L. Zhang, H. Yao, and H. Wang (2024)</span>
+              <span><span>Neat: nonlinear parameter-efficient adaptation of pre-trained models</span>.
+              </span>
+              <span><span>arXiv preprint arXiv:2410.01870</span>.
+              </span>
+              <span>Cited by: <a href="#S2.SS0.SSS0.Px2.p1.1"
+                  title="Nonlinear Extensions of LoRA. ‣ 2 Related Work ‣ NOBLE: Accelerating Transformers with Nonlinear Low-Rank Branches"><span>§2</span></a>.
+              </span>
+            </li>
+          </ul>
+        </section>
+        <section>
+          <h2>
+            <span>Appendix A </span>Implementation Details
+          </h2>
+          <section>
+            <h5>CosNet Architecture.</h5>
+            <div>
+              <p>The full CosNet nonlinearity applies two cosine activations with a linear mixing layer:</p>
+              <table>
+                <tbody>
+                  <tr>
+                    <td></td>
+                    <td><math alttext="\displaystyle h_{1}">
+                        <semantics>
+                          <msub>
+                            <mi>h</mi>
+                            <mn>1</mn>
+                          </msub>
+                          <annotation>\displaystyle h_{1}</annotation>
+                        </semantics>
+                      </math></td>
+                    <td><math alttext="\displaystyle=\cos(\omega_{1}\odot x+\phi_{1})">
+                        <semantics>
+                          <mrow>
+                            <mi></mi>
+                            <mo>=</mo>
+                            <mrow>
+                              <mi>cos</mi>
+                              <mo>⁡</mo>
+                              <mrow>
+                                <mo>(</mo>
+                                <mrow>
+                                  <mrow>
+                                    <msub>
+                                      <mi>ω</mi>
+                                      <mn>1</mn>
+                                    </msub>
+                                    <mo>⊙</mo>
+                                    <mi>x</mi>
+                                  </mrow>
+                                  <mo>+</mo>
+                                  <msub>
+                                    <mi>ϕ</mi>
+                                    <mn>1</mn>
+                                  </msub>
+                                </mrow>
+                                <mo>)</mo>
+                              </mrow>
+                            </mrow>
+                          </mrow>
+                          <annotation>\displaystyle=\cos(\omega_{1}\odot x+\phi_{1})</annotation>
+                        </semantics>
+                      </math></td>
+                    <td></td>
+                    <td><span>(5)</span></td>
+                  </tr>
+                </tbody>
+                <tbody>
+                  <tr>
+                    <td></td>
+                    <td><math alttext="\displaystyle h_{2}">
+                        <semantics>
+                          <msub>
+                            <mi>h</mi>
+                            <mn>2</mn>
+                          </msub>
+                          <annotation>\displaystyle h_{2}</annotation>
+                        </semantics>
+                      </math></td>
+                    <td><math alttext="\displaystyle=Mh_{1}">
+                        <semantics>
+                          <mrow>
+                            <mi></mi>
+                            <mo>=</mo>
+                            <mrow>
+                              <mi>M</mi>
+                              <mo>​</mo>
+                              <msub>
+                                <mi>h</mi>
+                                <mn>1</mn>
+                              </msub>
+                            </mrow>
+                          </mrow>
+                          <annotation>\displaystyle=Mh_{1}</annotation>
+                        </semantics>
+                      </math></td>
+                    <td></td>
+                    <td><span>(6)</span></td>
+                  </tr>
+                </tbody>
+                <tbody>
+                  <tr>
+                    <td></td>
+                    <td><math alttext="\displaystyle\text{CosNet}(x)">
+                        <semantics>
+                          <mrow>
+                            <mtext>CosNet</mtext>
+                            <mo>​</mo>
+                            <mrow>
+                              <mo>(</mo>
+                              <mi>x</mi>
+                              <mo>)</mo>
+                            </mrow>
+                          </mrow>
+                          <annotation>\displaystyle\text{CosNet}(x)</annotation>
+                        </semantics>
+                      </math></td>
+                    <td><math alttext="\displaystyle=\cos(\omega_{2}\odot h_{2}+\phi_{2})">
+                        <semantics>
+                          <mrow>
+                            <mi></mi>
+                            <mo>=</mo>
+                            <mrow>
+                              <mi>cos</mi>
+                              <mo>⁡</mo>
+                              <mrow>
+                                <mo>(</mo>
+                                <mrow>
+                                  <mrow>
+                                    <msub>
+                                      <mi>ω</mi>
+                                      <mn>2</mn>
+                                    </msub>
+                                    <mo>⊙</mo>
+                                    <msub>
+                                      <mi>h</mi>
+                                      <mn>2</mn>
+                                    </msub>
+                                  </mrow>
+                                  <mo>+</mo>
+                                  <msub>
+                                    <mi>ϕ</mi>
+                                    <mn>2</mn>
+                                  </msub>
+                                </mrow>
+                                <mo>)</mo>
+                              </mrow>
+                            </mrow>
+                          </mrow>
+                          <annotation>\displaystyle=\cos(\omega_{2}\odot h_{2}+\phi_{2})</annotation>
+                        </semantics>
+                      </math></td>
+                    <td></td>
+                    <td><span>(7)</span></td>
+                  </tr>
+                </tbody>
+              </table>
+              <p>where <math alttext="M\in\mathbb{R}^{r\times r}">
+                  <semantics>
+                    <mrow>
+                      <mi>M</mi>
+                      <mo>∈</mo>
+                      <msup>
+                        <mi>ℝ</mi>
+                        <mrow>
+                          <mi>r</mi>
+                          <mo>×</mo>
+                          <mi>r</mi>
+                        </mrow>
+                      </msup>
+                    </mrow>
+                    <annotation>M\in\mathbb{R}^{r\times r}</annotation>
+                  </semantics>
+                </math> is initialized with Xavier initialization and uses an elevated learning rate (scaled by the net
+                lr mult power, default 0.45).</p>
+            </div>
+          </section>
+          <section>
+            <h5>Frequency Initialization.</h5>
+            <div>
+              <p>Frequencies are sampled uniformly from <math
+                  alttext="[\omega_{\text{min}},\omega_{\text{max}}]=[0.8,1.2]">
+                  <semantics>
+                    <mrow>
+                      <mrow>
+                        <mo>[</mo>
+                        <msub>
+                          <mi>ω</mi>
+                          <mtext>min</mtext>
+                        </msub>
+                        <mo>,</mo>
+                        <msub>
+                          <mi>ω</mi>
+                          <mtext>max</mtext>
+                        </msub>
+                        <mo>]</mo>
+                      </mrow>
+                      <mo>=</mo>
+                      <mrow>
+                        <mo>[</mo>
+                        <mn>0.8</mn>
+                        <mo>,</mo>
+                        <mn>1.2</mn>
+                        <mo>]</mo>
+                      </mrow>
+                    </mrow>
+                    <annotation>[\omega_{\text{min}},\omega_{\text{max}}]=[0.8,1.2]</annotation>
+                  </semantics>
+                </math>. Meanwhile phases are sampled from a normal distribution with mean 0 and standard deviation 0.1.
+                Initializations with larger ranges and variances underperformed.</p>
+            </div>
+          </section>
+          <section>
+            <h5>Hyperparameter Defaults.</h5>
+            <div>
+              <ul>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p>LoRA rank: 64–256</p>
+                  </div>
+                </li>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p>Learning rate multiplier power <math alttext="\gamma">
+                        <semantics>
+                          <mi>γ</mi>
+                          <annotation>\gamma</annotation>
+                        </semantics>
+                      </math>: 0.3 (<math alttext="W_{\text{up}}">
+                        <semantics>
+                          <msub>
+                            <mi>W</mi>
+                            <mtext>up</mtext>
+                          </msub>
+                          <annotation>W_{\text{up}}</annotation>
+                        </semantics>
+                      </math> uses <math alttext="2\gamma=0.6">
+                        <semantics>
+                          <mrow>
+                            <mrow>
+                              <mn>2</mn>
+                              <mo>​</mo>
+                              <mi>γ</mi>
+                            </mrow>
+                            <mo>=</mo>
+                            <mn>0.6</mn>
+                          </mrow>
+                          <annotation>2\gamma=0.6</annotation>
+                        </semantics>
+                      </math>)</p>
+                  </div>
+                </li>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p><math alttext="W_{\text{up}}">
+                        <semantics>
+                          <msub>
+                            <mi>W</mi>
+                            <mtext>up</mtext>
+                          </msub>
+                          <annotation>W_{\text{up}}</annotation>
+                        </semantics>
+                      </math> initialization scale <math alttext="\alpha">
+                        <semantics>
+                          <mi>α</mi>
+                          <annotation>\alpha</annotation>
+                        </semantics>
+                      </math>: 0.01</p>
+                  </div>
+                </li>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p>Main linear <math alttext="W">
+                        <semantics>
+                          <mi>W</mi>
+                          <annotation>W</annotation>
+                        </semantics>
+                      </math> initialization scale: <math alttext="0.5/\sqrt{d_{\text{in}}}">
+                        <semantics>
+                          <mrow>
+                            <mn>0.5</mn>
+                            <mo>/</mo>
+                            <msqrt>
+                              <msub>
+                                <mi>d</mi>
+                                <mtext>in</mtext>
+                              </msub>
+                            </msqrt>
+                          </mrow>
+                          <annotation>0.5/\sqrt{d_{\text{in}}}</annotation>
+                        </semantics>
+                      </math> (half typical Kaiming)</p>
+                  </div>
+                </li>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p>Frequency learning rate multiplier: 3.0</p>
+                  </div>
+                </li>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p>Phase learning rate multiplier: 5.0</p>
+                  </div>
+                </li>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p>Phase initialization std: 0.1</p>
+                  </div>
+                </li>
+                <li>
+                  <span>•</span>
+                  <div>
+                    <p>CosNet internal fc lr mult power: 0.45</p>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </section>
+        </section>
+        <section>
+          <h2>
+            <span>Appendix B </span>Experimental Setup Details
+          </h2>
+          <section>
+            <h5>LLM Training.</h5>
+            <div>
+              <p>OpenWebText dataset, BPE tokenizer (50257 vocab), sequence length 1024, linear warmup for 2000 steps,
+                linear decay.</p>
+            </div>
+          </section>
+          <section>
+            <h5>BERT Training.</h5>
+            <div>
+              <p>Same dataset, BERT tokenizer (30522 vocab), sequence length 1024, linear warmup for 1000 steps, linear
+                decay.</p>
+            </div>
+          </section>
+          <section>
+            <h5>ViT Training.</h5>
+            <div>
+              <p>ImageNet-1k, 224<math alttext="\times">
+                  <semantics>
+                    <mo>×</mo>
+                    <annotation>\times</annotation>
+                  </semantics>
+                </math>224 images, ViT-S/16 architecture (patch size 16), RandAugment (n=2, m=9), Mixup (<math
+                  alttext="\alpha">
+                  <semantics>
+                    <mi>α</mi>
+                    <annotation>\alpha</annotation>
+                  </semantics>
+                </math>=0.8), CutMix (<math alttext="\alpha">
+                  <semantics>
+                    <mi>α</mi>
+                    <annotation>\alpha</annotation>
+                  </semantics>
+                </math>=1.0), linear warmup for 5 epochs followed by linear decay.</p>
+            </div>
+          </section>
+          <section>
+            <h5>Image Token Modeling.</h5>
+            <div>
+              <p>ImageNet-1k images encoded to 1024 discrete tokens (32<math alttext="\times">
+                  <semantics>
+                    <mo>×</mo>
+                    <annotation>\times</annotation>
+                  </semantics>
+                </math>32 grid) using pretrained amused-512 VQGAN (8192 codebook). Autoregressive transformer trained
+                with next-token prediction (cross-entropy loss), class-conditional with prepended class embedding, 2D
+                RoPE positional encoding, raster-scan token order.</p>
+            </div>
+          </section>
+        </section>
+      </article>
+    </div>
+  </div>
+
+  <div>
+    <div>BETA</div>
+    <a href="javascript:toggleReadingMode();" title="Disable reading mode, show header and footer">
+      <svg><!--!Font Awesome Free v7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2026 Fonticons, Inc.-->
+        <path></path>
+      </svg>
+    </a>
+  </div>
+</body>
+
+</html>

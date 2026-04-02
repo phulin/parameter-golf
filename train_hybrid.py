@@ -105,6 +105,10 @@ class Hyperparameters:
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
     grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.0))
 
+    # NOBLE cosine adapter hyperparameters (0 = disabled).
+    noble_rank = int(os.environ.get("NOBLE_RANK", 0))
+    noble_lr_gamma = float(os.environ.get("NOBLE_LR_GAMMA", 0.3))
+
     # Test-time training (LoRA) hyperparameters.
     ttt_lora_rank = int(os.environ.get("TTT_LORA_RANK", 8))
     ttt_lora_lr = float(os.environ.get("TTT_LORA_LR", 0.01))
@@ -631,9 +635,60 @@ class RMSNorm(nn.Module):
 
 class CastedLinear(nn.Linear):
     # Keep weights in fp32 for optimizer/state quality, cast at matmul time for bf16 compute.
+    # Pass noble_rank > 0 to attach a NOBLE nonlinear low-rank branch to this layer.
+    def __init__(self, in_features: int, out_features: int, bias: bool = True, noble_rank: int = 0):
+        super().__init__(in_features, out_features, bias=bias)
+        # NOBLECosAdapter is defined later in the file; resolved at call time, not definition time.
+        self.noble = NOBLECosAdapter(in_features, out_features, noble_rank) if noble_rank > 0 else None
+
     def forward(self, x: Tensor) -> Tensor:
         bias = self.bias.to(x.dtype) if self.bias is not None else None
-        return F.linear(x, self.weight.to(x.dtype), bias)
+        out = F.linear(x, self.weight.to(x.dtype), bias)
+        if self.noble is not None:
+            out = out + self.noble(x)
+        return out
+
+
+class NOBLECosAdapter(nn.Module):
+    """NOBLE nonlinear low-rank branch with CosNet nonlinearity (arXiv:2603.06492).
+
+    Computes σ_cos(x W_down) W_up, where
+    σ_cos(h) = cos(ω2 ⊙ (M · cos(ω1 ⊙ h + φ1)) + φ2)
+
+    Added to each augmented linear layer: f_NOBLE(x) = xW + σ_cos(xW_down)W_up.
+    """
+
+    def __init__(self, d_in: int, d_out: int, rank: int):
+        super().__init__()
+        self.d_in = d_in
+        self.d_out = d_out
+        self.rank = rank
+        self.W_down = CastedLinear(d_in, rank, bias=False)
+        self.W_up = CastedLinear(rank, d_out, bias=False)
+        self.omega1 = nn.Parameter(torch.empty(rank))
+        self.phi1 = nn.Parameter(torch.empty(rank))
+        self.M = CastedLinear(rank, rank, bias=False)
+        self.omega2 = nn.Parameter(torch.empty(rank))
+        self.phi2 = nn.Parameter(torch.empty(rank))
+        self._init_noble()
+
+    def _init_noble(self) -> None:
+        nn.init.kaiming_uniform_(self.W_down.weight, a=math.sqrt(5))
+        # Near-zero W_up so branch contributes negligibly at init.
+        nn.init.normal_(self.W_up.weight, std=0.01 / math.sqrt(self.rank))
+        # Frequencies uniform [0.8, 1.2]; phases N(0, 0.01).
+        nn.init.uniform_(self.omega1, 0.8, 1.2)
+        nn.init.uniform_(self.omega2, 0.8, 1.2)
+        nn.init.normal_(self.phi1, std=0.1)
+        nn.init.normal_(self.phi2, std=0.1)
+        nn.init.xavier_uniform_(self.M.weight)
+
+    def forward(self, x: Tensor) -> Tensor:
+        h = self.W_down(x)
+        h = torch.cos(self.omega1.to(h.dtype) * h + self.phi1.to(h.dtype))
+        h = self.M(h)
+        h = torch.cos(self.omega2.to(h.dtype) * h + self.phi2.to(h.dtype))
+        return self.W_up(h)
 
 
 def restore_low_dim_params_to_fp32(module: nn.Module) -> None:
@@ -688,6 +743,7 @@ class CausalSelfAttention(nn.Module):
         num_kv_heads: int,
         rope_base: float,
         qk_gain_init: float,
+        noble_rank: int = 0,
     ):
         super().__init__()
         if dim % num_heads != 0:
@@ -700,10 +756,10 @@ class CausalSelfAttention(nn.Module):
         if self.head_dim % 2 != 0:
             raise ValueError("head_dim must be even for RoPE")
         kv_dim = self.num_kv_heads * self.head_dim
-        self.c_q = CastedLinear(dim, dim, bias=False)
-        self.c_k = CastedLinear(dim, kv_dim, bias=False)
-        self.c_v = CastedLinear(dim, kv_dim, bias=False)
-        self.proj = CastedLinear(dim, dim, bias=False)
+        self.c_q = CastedLinear(dim, dim, bias=False, noble_rank=noble_rank)
+        self.c_k = CastedLinear(dim, kv_dim, bias=False, noble_rank=noble_rank)
+        self.c_v = CastedLinear(dim, kv_dim, bias=False, noble_rank=noble_rank)
+        self.proj = CastedLinear(dim, dim, bias=False, noble_rank=noble_rank)
         self.proj._zero_init = True
         self.q_gain = nn.Parameter(
             torch.full((num_heads,), qk_gain_init, dtype=torch.float32)
@@ -738,11 +794,11 @@ class CausalSelfAttention(nn.Module):
 
 class MLP(nn.Module):
     # relu^2 MLP from the original modded-nanogpt setup
-    def __init__(self, dim: int, mlp_mult: int):
+    def __init__(self, dim: int, mlp_mult: int, noble_rank: int = 0):
         super().__init__()
         hidden = mlp_mult * dim
-        self.fc = CastedLinear(dim, hidden, bias=False)
-        self.proj = CastedLinear(hidden, dim, bias=False)
+        self.fc = CastedLinear(dim, hidden, bias=False, noble_rank=noble_rank)
+        self.proj = CastedLinear(hidden, dim, bias=False, noble_rank=noble_rank)
         self.proj._zero_init = True
 
     def forward(self, x: Tensor) -> Tensor:
@@ -761,6 +817,7 @@ class Block(nn.Module):
         qk_gain_init: float,
         use_deltanet: bool = False,
         use_short_conv: bool = True,
+        noble_rank: int = 0,
     ):
         super().__init__()
         self.use_deltanet = use_deltanet
@@ -779,9 +836,10 @@ class Block(nn.Module):
             )
         else:
             self.attn = CausalSelfAttention(
-                dim, num_heads, num_kv_heads, rope_base, qk_gain_init
+                dim, num_heads, num_kv_heads, rope_base, qk_gain_init,
+                noble_rank=noble_rank,
             )
-        self.mlp = MLP(dim, mlp_mult)
+        self.mlp = MLP(dim, mlp_mult, noble_rank=noble_rank)
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.resid_mix = nn.Parameter(
@@ -823,6 +881,7 @@ class GPT(nn.Module):
         logit_softcap: float,
         rope_base: float,
         qk_gain_init: float,
+        noble_rank: int = 0,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -849,6 +908,7 @@ class GPT(nn.Module):
                     qk_gain_init,
                     use_deltanet=(i % (gdn_ratio + 1) < gdn_ratio),
                     use_short_conv=use_short_conv,
+                    noble_rank=noble_rank,
                 )
                 for i in range(num_layers)
             ]
@@ -1329,6 +1389,7 @@ def main() -> None:
             logit_softcap=args.logit_softcap,
             rope_base=args.rope_base,
             qk_gain_init=args.qk_gain_init,
+            noble_rank=args.noble_rank,
         )
         .to(device)
         .bfloat16()
@@ -1352,11 +1413,28 @@ def main() -> None:
     # - matrix params in transformer blocks use MATRIX_LR via Muon
     # - vectors/scalars use SCALAR_LR via Adam
     block_named_params = list(base_model.blocks.named_parameters())
+    # NOBLE W_up and M need elevated Adam LRs (per-adapter, per paper §3.3).
+    # Collect them separately; W_down and omega/phi fall naturally into matrix/scalar groups.
+    noble_adam_groups: list[dict] = []
+    noble_elevated_names: set[str] = set()
+    if args.noble_rank > 0:
+        for module in base_model.blocks.modules():
+            if isinstance(module, NOBLECosAdapter):
+                d = min(module.d_in, module.d_out)
+                lr_up = args.matrix_lr * (d / module.rank) ** (2 * args.noble_lr_gamma)
+                lr_m = args.matrix_lr * (d / module.rank) ** (1.5 * args.noble_lr_gamma)
+                noble_adam_groups.append({"params": [module.W_up.weight], "lr": lr_up, "base_lr": lr_up})
+                noble_adam_groups.append({"params": [module.M.weight], "lr": lr_m, "base_lr": lr_m})
+        noble_elevated_ids = {id(g["params"][0]) for g in noble_adam_groups}
+        noble_elevated_names = {
+            name for name, p in block_named_params if id(p) in noble_elevated_ids
+        }
     matrix_params = [
         p
         for name, p in block_named_params
         if p.ndim == 2
         and not any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
+        and name not in noble_elevated_names
     ]
     scalar_params = [
         p
@@ -1392,6 +1470,14 @@ def main() -> None:
         optimizer_muon,
         optimizer_scalar,
     ]
+    if noble_adam_groups:
+        optimizer_noble = torch.optim.Adam(
+            noble_adam_groups,
+            betas=(args.beta1, args.beta2),
+            eps=args.adam_eps,
+            fused=True,
+        )
+        optimizers.append(optimizer_noble)
     if base_model.lm_head is not None:
         optimizer_head = torch.optim.Adam(
             [
