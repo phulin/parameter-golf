@@ -788,6 +788,9 @@ class CausalSelfAttention(nn.Module):
         self.c_v = CastedLinear(dim, kv_dim, bias=False, noble_rank=noble_rank)
         self.proj = CastedLinear(dim, dim, bias=False, noble_rank=noble_rank)
         self.proj._zero_init = True
+        if self.proj.noble is not None:
+            # Preserve the residual-path zero init used by this model family.
+            nn.init.zeros_(self.proj.noble.W_up.weight)
         self.q_gain = nn.Parameter(
             torch.full((num_heads,), qk_gain_init, dtype=torch.float32)
         )
@@ -827,6 +830,9 @@ class MLP(nn.Module):
         self.fc = CastedLinear(dim, hidden, bias=False, noble_rank=noble_rank)
         self.proj = CastedLinear(hidden, dim, bias=False, noble_rank=noble_rank)
         self.proj._zero_init = True
+        if self.proj.noble is not None:
+            # Preserve the residual-path zero init used by this model family.
+            nn.init.zeros_(self.proj.noble.W_up.weight)
 
     def forward(self, x: Tensor) -> Tensor:
         x = torch.relu(self.fc(x))
