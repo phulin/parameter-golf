@@ -107,6 +107,9 @@ class Hyperparameters:
 
     # NOBLE cosine adapter hyperparameters (0 = disabled).
     noble_rank = int(os.environ.get("NOBLE_RANK", 0))
+    noble_main_init_scale = float(os.environ.get("NOBLE_MAIN_INIT_SCALE", 0.5))
+    noble_lr_power = float(os.environ.get("NOBLE_LR_POWER", 0.3))
+    noble_m_lr_power = float(os.environ.get("NOBLE_M_LR_POWER", 0.45))
 
     # Test-time training (LoRA) hyperparameters.
     ttt_lora_rank = int(os.environ.get("TTT_LORA_RANK", 8))
@@ -649,6 +652,13 @@ class CastedLinear(nn.Linear):
             if noble_rank > 0
             else None
         )
+        if noble_rank > 0:
+            # Match the paper's reduced main-path init for layers that carry a NOBLE branch.
+            nn.init.normal_(
+                self.weight,
+                mean=0.0,
+                std=Hyperparameters.noble_main_init_scale / math.sqrt(in_features),
+            )
 
     def forward(self, x: Tensor) -> Tensor:
         bias = self.bias.to(x.dtype) if self.bias is not None else None
@@ -698,6 +708,14 @@ class NOBLECosAdapter(nn.Module):
         h = self.M(h)
         h = torch.cos(self.omega2.to(h.dtype) * h + self.phi2.to(h.dtype))
         return self.W_up(h)
+
+    def w_up_base_lr(self, lr_base: float) -> float:
+        dim_ratio = min(self.d_in, self.d_out) / self.rank
+        return lr_base * (dim_ratio ** (2.0 * Hyperparameters.noble_lr_power))
+
+    def m_base_lr(self, lr_base: float) -> float:
+        dim_ratio = min(self.d_in, self.d_out) / self.rank
+        return lr_base * (dim_ratio ** Hyperparameters.noble_m_lr_power)
 
 
 def restore_low_dim_params_to_fp32(module: nn.Module) -> None:
@@ -1433,11 +1451,20 @@ def main() -> None:
     # early (blocked by near-zero W_up), so Muon would divide by ~eps and amplify noise.
     # omega/phi (1D) fall into scalar Adam naturally.
     noble_matrix_names: set[str] = set()
+    noble_scaled_param_lrs: dict[int, float] = {}
     if args.noble_rank > 0:
         noble_matrix_names = {
             name for name, p in block_named_params
             if p.ndim == 2 and "noble" in name
         }
+        for module in base_model.blocks.modules():
+            if isinstance(module, NOBLECosAdapter):
+                noble_scaled_param_lrs[id(module.W_up.weight)] = module.w_up_base_lr(
+                    args.scalar_lr
+                )
+                noble_scaled_param_lrs[id(module.M.weight)] = module.m_base_lr(
+                    args.scalar_lr
+                )
     matrix_params = [
         p
         for name, p in block_named_params
@@ -1450,7 +1477,7 @@ def main() -> None:
         for name, p in block_named_params
         if p.ndim < 2
         or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
-        or name in noble_matrix_names
+        or (name in noble_matrix_names and id(p) not in noble_scaled_param_lrs)
     ]
     if base_model.skip_weights.numel() > 0:
         scalar_params.append(base_model.skip_weights)
@@ -1469,8 +1496,21 @@ def main() -> None:
     )
     for group in optimizer_muon.param_groups:
         group["base_lr"] = args.matrix_lr
+    scalar_param_groups = [
+        {"params": scalar_params, "lr": args.scalar_lr, "base_lr": args.scalar_lr}
+    ]
+    noble_lr_buckets: dict[float, list[Tensor]] = {}
+    for _, p in block_named_params:
+        base_lr = noble_scaled_param_lrs.get(id(p))
+        if base_lr is None:
+            continue
+        noble_lr_buckets.setdefault(base_lr, []).append(p)
+    for base_lr, params in sorted(noble_lr_buckets.items(), key=lambda item: item[0]):
+        scalar_param_groups.append(
+            {"params": params, "lr": base_lr, "base_lr": base_lr}
+        )
     optimizer_scalar = torch.optim.Adam(
-        [{"params": scalar_params, "lr": args.scalar_lr, "base_lr": args.scalar_lr}],
+        scalar_param_groups,
         betas=(args.beta1, args.beta2),
         eps=args.adam_eps,
         fused=True,
