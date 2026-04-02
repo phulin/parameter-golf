@@ -107,6 +107,7 @@ class Hyperparameters:
 
     # NOBLE cosine adapter hyperparameters (0 = disabled).
     noble_rank = int(os.environ.get("NOBLE_RANK", 0))
+    noble_lr = float(os.environ.get("NOBLE_LR", 3e-4))
     noble_main_init_scale = float(os.environ.get("NOBLE_MAIN_INIT_SCALE", 0.5))
     noble_lr_power = float(os.environ.get("NOBLE_LR_POWER", 0.3))
     noble_m_lr_power = float(os.environ.get("NOBLE_M_LR_POWER", 0.45))
@@ -727,6 +728,38 @@ def restore_low_dim_params_to_fp32(module: nn.Module) -> None:
                 or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
             ) and param.dtype != torch.float32:
                 param.data = param.data.float()
+
+
+def collect_noble_grad_stats(module: nn.Module) -> dict[str, float]:
+    stats: dict[str, float] = {}
+    noble_modules = [m for m in module.modules() if isinstance(m, NOBLECosAdapter)]
+    if not noble_modules:
+        return stats
+
+    def add_group(group_name: str, params: list[Tensor]) -> None:
+        grad_sq_sum = 0.0
+        param_sq_sum = 0.0
+        grad_max = 0.0
+        nonzero_grads = 0
+        for param in params:
+            param_sq_sum += float(param.detach().float().pow(2).sum().item())
+            if param.grad is None:
+                continue
+            grad = param.grad.detach().float()
+            grad_sq_sum += float(grad.pow(2).sum().item())
+            grad_max = max(grad_max, float(grad.abs().max().item()))
+            nonzero_grads += 1
+        stats[f"grad/noble_{group_name}_norm"] = math.sqrt(grad_sq_sum)
+        stats[f"param/noble_{group_name}_norm"] = math.sqrt(param_sq_sum)
+        stats[f"grad/noble_{group_name}_max"] = grad_max
+        stats[f"grad/noble_{group_name}_active"] = float(nonzero_grads)
+
+    add_group("w_down", [m.W_down.weight for m in noble_modules])
+    add_group("w_up", [m.W_up.weight for m in noble_modules])
+    add_group("m", [m.M.weight for m in noble_modules])
+    add_group("omega", [m.omega1 for m in noble_modules] + [m.omega2 for m in noble_modules])
+    add_group("phi", [m.phi1 for m in noble_modules] + [m.phi2 for m in noble_modules])
+    return stats
 
 
 class Rotary(nn.Module):
@@ -1450,43 +1483,42 @@ def main() -> None:
     # - matrix params in transformer blocks use MATRIX_LR via Muon
     # - vectors/scalars use SCALAR_LR via Adam
     block_named_params = list(base_model.blocks.named_parameters())
-    # All NOBLE matrices (W_down, W_up, M) go to scalar Adam — NOT Muon.
+    # All NOBLE parameters go to a dedicated Adam optimizer — NOT Muon.
     # Muon applies a fixed-magnitude normalized update regardless of current weight scale, so on
     # near-zero W_up (init std ~0.002) it causes ~200% relative Frobenius change per step, which
     # immediately blows up the branch. W_down/M also stay out of Muon: their gradients are ≈0
     # early (blocked by near-zero W_up), so Muon would divide by ~eps and amplify noise.
-    # omega/phi (1D) fall into scalar Adam naturally.
-    noble_matrix_names: set[str] = set()
+    noble_names: set[str] = set()
     noble_scaled_param_lrs: dict[int, float] = {}
     if args.noble_rank > 0:
-        noble_matrix_names = {
-            name for name, p in block_named_params
-            if p.ndim == 2 and "noble" in name
-        }
+        noble_names = {name for name, _ in block_named_params if "noble" in name}
         for module in base_model.blocks.modules():
             if isinstance(module, NOBLECosAdapter):
                 noble_scaled_param_lrs[id(module.W_up.weight)] = module.w_up_base_lr(
-                    args.scalar_lr
+                    args.noble_lr
                 )
                 noble_scaled_param_lrs[id(module.M.weight)] = module.m_base_lr(
-                    args.scalar_lr
+                    args.noble_lr
                 )
     matrix_params = [
         p
         for name, p in block_named_params
         if p.ndim == 2
         and not any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
-        and name not in noble_matrix_names
+        and name not in noble_names
     ]
     scalar_params = [
         p
         for name, p in block_named_params
-        if p.ndim < 2
-        or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
-        or (name in noble_matrix_names and id(p) not in noble_scaled_param_lrs)
+        if (
+            p.ndim < 2
+            or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
+        )
+        and name not in noble_names
     ]
     if base_model.skip_weights.numel() > 0:
         scalar_params.append(base_model.skip_weights)
+    noble_params = [p for name, p in block_named_params if name in noble_names]
     token_lr = args.tied_embed_lr if args.tie_embeddings else args.embed_lr
     optimizer_tok = torch.optim.Adam(
         [{"params": [base_model.tok_emb.weight], "lr": token_lr, "base_lr": token_lr}],
@@ -1505,27 +1537,54 @@ def main() -> None:
     scalar_param_groups = [
         {"params": scalar_params, "lr": args.scalar_lr, "base_lr": args.scalar_lr}
     ]
-    noble_lr_buckets: dict[float, list[Tensor]] = {}
-    for _, p in block_named_params:
-        base_lr = noble_scaled_param_lrs.get(id(p))
-        if base_lr is None:
-            continue
-        noble_lr_buckets.setdefault(base_lr, []).append(p)
-    for base_lr, params in sorted(noble_lr_buckets.items(), key=lambda item: item[0]):
-        scalar_param_groups.append(
-            {"params": params, "lr": base_lr, "base_lr": base_lr}
-        )
     optimizer_scalar = torch.optim.Adam(
         scalar_param_groups,
         betas=(args.beta1, args.beta2),
         eps=args.adam_eps,
         fused=True,
     )
+    noble_param_groups = []
+    if noble_params:
+        noble_default_params = [
+            p for p in noble_params if id(p) not in noble_scaled_param_lrs
+        ]
+        if noble_default_params:
+            noble_param_groups.append(
+                {
+                    "params": noble_default_params,
+                    "lr": args.noble_lr,
+                    "base_lr": args.noble_lr,
+                }
+            )
+        noble_lr_buckets: dict[float, list[Tensor]] = {}
+        for param in noble_params:
+            base_lr = noble_scaled_param_lrs.get(id(param))
+            if base_lr is None:
+                continue
+            noble_lr_buckets.setdefault(base_lr, []).append(param)
+        for base_lr, params in sorted(
+            noble_lr_buckets.items(), key=lambda item: item[0]
+        ):
+            noble_param_groups.append(
+                {"params": params, "lr": base_lr, "base_lr": base_lr}
+            )
+    optimizer_noble = (
+        torch.optim.Adam(
+            noble_param_groups,
+            betas=(args.beta1, args.beta2),
+            eps=args.adam_eps,
+            fused=True,
+        )
+        if noble_param_groups
+        else None
+    )
     optimizers: list[torch.optim.Optimizer] = [
         optimizer_tok,
         optimizer_muon,
         optimizer_scalar,
     ]
+    if optimizer_noble is not None:
+        optimizers.append(optimizer_noble)
     if base_model.lm_head is not None:
         optimizer_head = torch.optim.Adam(
             [
@@ -1551,7 +1610,7 @@ def main() -> None:
     log0(
         f"tie_embeddings:{args.tie_embeddings} embed_lr:{token_lr} "
         f"head_lr:{args.head_lr if base_model.lm_head is not None else 0.0} "
-        f"matrix_lr:{args.matrix_lr} scalar_lr:{args.scalar_lr}"
+        f"matrix_lr:{args.matrix_lr} scalar_lr:{args.scalar_lr} noble_lr:{args.noble_lr}"
     )
     log0(
         f"train_batch_tokens:{args.train_batch_tokens} train_seq_len:{args.train_seq_len} "
@@ -1738,6 +1797,17 @@ def main() -> None:
             train_loss += loss.detach()
             (loss * grad_scale).backward()
         train_loss /= grad_accum_steps
+        next_step = step + 1
+        should_log_train = args.train_log_every > 0 and (
+            next_step <= 10
+            or next_step % args.train_log_every == 0
+            or stop_after_step is not None
+        )
+        noble_grad_stats = (
+            collect_noble_grad_stats(base_model)
+            if args.noble_rank > 0 and should_log_train
+            else {}
+        )
 
         frac = (
             min(step / args.muon_momentum_warmup_steps, 1.0)
@@ -1760,29 +1830,30 @@ def main() -> None:
             opt.step()
         zero_grad_all()
 
-        step += 1
+        step = next_step
         approx_training_time_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
-        should_log_train = args.train_log_every > 0 and (
-            step <= 10
-            or step % args.train_log_every == 0
-            or stop_after_step is not None
-        )
         if should_log_train:
+            noble_grad_summary = ""
+            if noble_grad_stats:
+                noble_grad_summary = (
+                    f" noble_wup_grad:{noble_grad_stats['grad/noble_w_up_norm']:.3e}"
+                    f" noble_m_grad:{noble_grad_stats['grad/noble_m_norm']:.3e}"
+                    f" noble_wdown_grad:{noble_grad_stats['grad/noble_w_down_norm']:.3e}"
+                )
             log0(
                 f"step:{step}/{args.iterations} train_loss:{train_loss.item():.4f} "
                 f"train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / step:.2f}ms"
+                f"{noble_grad_summary}"
             )
-            log_wandb(
-                wandb_run,
-                {
-                    "train/loss": train_loss.item(),
-                    "train/time_ms": approx_training_time_ms,
-                    "train/step_avg_ms": approx_training_time_ms / step,
-                    "train/lr_scale": scale,
-                    "optimizer/muon_momentum": muon_momentum,
-                },
-                step=step,
-            )
+            train_metrics = {
+                "train/loss": train_loss.item(),
+                "train/time_ms": approx_training_time_ms,
+                "train/step_avg_ms": approx_training_time_ms / step,
+                "train/lr_scale": scale,
+                "optimizer/muon_momentum": muon_momentum,
+            }
+            train_metrics.update(noble_grad_stats)
+            log_wandb(wandb_run, train_metrics, step=step)
 
         # Needed to sync whether we've reached the wallclock cap.
         reached_cap = (
