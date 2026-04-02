@@ -16,7 +16,6 @@ import subprocess
 import sys
 import time
 import uuid
-import zstandard as zstd
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +23,7 @@ import sentencepiece as spm
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+import zstandard as zstd
 from fla.layers import GatedDeltaNet as FLAGatedDeltaNet
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -107,7 +107,6 @@ class Hyperparameters:
 
     # NOBLE cosine adapter hyperparameters (0 = disabled).
     noble_rank = int(os.environ.get("NOBLE_RANK", 0))
-    noble_lr_gamma = float(os.environ.get("NOBLE_LR_GAMMA", 0.3))
 
     # Test-time training (LoRA) hyperparameters.
     ttt_lora_rank = int(os.environ.get("TTT_LORA_RANK", 8))
@@ -636,10 +635,20 @@ class RMSNorm(nn.Module):
 class CastedLinear(nn.Linear):
     # Keep weights in fp32 for optimizer/state quality, cast at matmul time for bf16 compute.
     # Pass noble_rank > 0 to attach a NOBLE nonlinear low-rank branch to this layer.
-    def __init__(self, in_features: int, out_features: int, bias: bool = True, noble_rank: int = 0):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = True,
+        noble_rank: int = 0,
+    ):
         super().__init__(in_features, out_features, bias=bias)
         # NOBLECosAdapter is defined later in the file; resolved at call time, not definition time.
-        self.noble = NOBLECosAdapter(in_features, out_features, noble_rank) if noble_rank > 0 else None
+        self.noble = (
+            NOBLECosAdapter(in_features, out_features, noble_rank)
+            if noble_rank > 0
+            else None
+        )
 
     def forward(self, x: Tensor) -> Tensor:
         bias = self.bias.to(x.dtype) if self.bias is not None else None
@@ -836,7 +845,11 @@ class Block(nn.Module):
             )
         else:
             self.attn = CausalSelfAttention(
-                dim, num_heads, num_kv_heads, rope_base, qk_gain_init,
+                dim,
+                num_heads,
+                num_kv_heads,
+                rope_base,
+                qk_gain_init,
                 noble_rank=noble_rank,
             )
         self.mlp = MLP(dim, mlp_mult, noble_rank=noble_rank)
@@ -1413,30 +1426,31 @@ def main() -> None:
     # - matrix params in transformer blocks use MATRIX_LR via Muon
     # - vectors/scalars use SCALAR_LR via Adam
     block_named_params = list(base_model.blocks.named_parameters())
-    # NOBLE optimizer split:
-    #   W_up  → Muon: gradient is always live (flows from loss, not through near-zero W_up).
-    #   W_down, M → scalar Adam: early gradients are ≈0 (blocked by near-zero W_up); Muon would
-    #               divide by ~eps and blow up. Adam handles near-zero grads gracefully.
-    #   omega, phi → scalar Adam naturally (1D).
-    noble_adam_only_names: set[str] = set()
+    # All NOBLE matrices (W_down, W_up, M) go to scalar Adam — NOT Muon.
+    # Muon applies a fixed-magnitude normalized update regardless of current weight scale, so on
+    # near-zero W_up (init std ~0.002) it causes ~200% relative Frobenius change per step, which
+    # immediately blows up the branch. W_down/M also stay out of Muon: their gradients are ≈0
+    # early (blocked by near-zero W_up), so Muon would divide by ~eps and amplify noise.
+    # omega/phi (1D) fall into scalar Adam naturally.
+    noble_matrix_names: set[str] = set()
     if args.noble_rank > 0:
-        noble_adam_only_names = {
+        noble_matrix_names = {
             name for name, p in block_named_params
-            if p.ndim == 2 and "noble" in name and "W_up" not in name
+            if p.ndim == 2 and "noble" in name
         }
     matrix_params = [
         p
         for name, p in block_named_params
         if p.ndim == 2
         and not any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
-        and name not in noble_adam_only_names
+        and name not in noble_matrix_names
     ]
     scalar_params = [
         p
         for name, p in block_named_params
         if p.ndim < 2
         or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
-        or name in noble_adam_only_names
+        or name in noble_matrix_names
     ]
     if base_model.skip_weights.numel() > 0:
         scalar_params.append(base_model.skip_weights)
@@ -1797,7 +1811,8 @@ def main() -> None:
     with open("final_model.int8.ptz", "rb") as f:
         quant_blob_disk = f.read()
     quant_state = torch.load(
-        io.BytesIO(zstd.ZstdDecompressor().decompress(quant_blob_disk)), map_location="cpu"
+        io.BytesIO(zstd.ZstdDecompressor().decompress(quant_blob_disk)),
+        map_location="cpu",
     )
     base_model.load_state_dict(dequantize_state_dict_int8(quant_state), strict=True)
     torch.cuda.synchronize()
