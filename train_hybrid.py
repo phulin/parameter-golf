@@ -82,6 +82,7 @@ class Hyperparameters:
     mlp_mult = int(os.environ.get("MLP_MULT", 2))
     gdn_ratio = int(os.environ.get("GDN_RATIO", 1))
     use_short_conv = bool(int(os.environ.get("USE_SHORT_CONV", "1")))
+    use_swiglu = bool(int(os.environ.get("USE_SWIGLU", "0")))
     raw_bytes = bool(int(os.environ.get("RAW_BYTES", "0")))
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
@@ -750,6 +751,20 @@ class MLP(nn.Module):
         return self.proj(x.square())
 
 
+class SwiGLUMLP(nn.Module):
+    # SwiGLU MLP with the same parameter count as relu^2 MLP (hidden = 2/3 * mlp_mult * dim)
+    def __init__(self, dim: int, mlp_mult: int):
+        super().__init__()
+        hidden = round(2 * mlp_mult * dim / 3)
+        self.fc = CastedLinear(dim, hidden, bias=False)
+        self.fc_gate = CastedLinear(dim, hidden, bias=False)
+        self.proj = CastedLinear(hidden, dim, bias=False)
+        self.proj._zero_init = True
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.proj(F.silu(self.fc_gate(x)) * self.fc(x))
+
+
 class Block(nn.Module):
     def __init__(
         self,
@@ -761,6 +776,7 @@ class Block(nn.Module):
         qk_gain_init: float,
         use_deltanet: bool = False,
         use_short_conv: bool = True,
+        use_swiglu: bool = False,
     ):
         super().__init__()
         self.use_deltanet = use_deltanet
@@ -781,7 +797,7 @@ class Block(nn.Module):
             self.attn = CausalSelfAttention(
                 dim, num_heads, num_kv_heads, rope_base, qk_gain_init
             )
-        self.mlp = MLP(dim, mlp_mult)
+        self.mlp = SwiGLUMLP(dim, mlp_mult) if use_swiglu else MLP(dim, mlp_mult)
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.resid_mix = nn.Parameter(
@@ -818,6 +834,7 @@ class GPT(nn.Module):
         mlp_mult: int,
         gdn_ratio: int,
         use_short_conv: bool,
+        use_swiglu: bool,
         tie_embeddings: bool,
         tied_embed_init_std: float,
         logit_softcap: float,
@@ -849,6 +866,7 @@ class GPT(nn.Module):
                     qk_gain_init,
                     use_deltanet=(i % (gdn_ratio + 1) < gdn_ratio),
                     use_short_conv=use_short_conv,
+                    use_swiglu=use_swiglu,
                 )
                 for i in range(num_layers)
             ]
@@ -1324,6 +1342,7 @@ def main() -> None:
             mlp_mult=args.mlp_mult,
             gdn_ratio=args.gdn_ratio,
             use_short_conv=args.use_short_conv,
+            use_swiglu=args.use_swiglu,
             tie_embeddings=args.tie_embeddings,
             tied_embed_init_std=args.tied_embed_init_std,
             logit_softcap=args.logit_softcap,
