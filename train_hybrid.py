@@ -1413,34 +1413,30 @@ def main() -> None:
     # - matrix params in transformer blocks use MATRIX_LR via Muon
     # - vectors/scalars use SCALAR_LR via Adam
     block_named_params = list(base_model.blocks.named_parameters())
-    # NOBLE W_up and M need elevated Adam LRs (per-adapter, per paper §3.3).
-    # Collect them separately; W_down and omega/phi fall naturally into matrix/scalar groups.
-    noble_adam_groups: list[dict] = []
-    noble_elevated_names: set[str] = set()
+    # NOBLE optimizer split:
+    #   W_up  → Muon: gradient is always live (flows from loss, not through near-zero W_up).
+    #   W_down, M → scalar Adam: early gradients are ≈0 (blocked by near-zero W_up); Muon would
+    #               divide by ~eps and blow up. Adam handles near-zero grads gracefully.
+    #   omega, phi → scalar Adam naturally (1D).
+    noble_adam_only_names: set[str] = set()
     if args.noble_rank > 0:
-        for module in base_model.blocks.modules():
-            if isinstance(module, NOBLECosAdapter):
-                d = min(module.d_in, module.d_out)
-                lr_up = args.matrix_lr * (d / module.rank) ** (2 * args.noble_lr_gamma)
-                lr_m = args.matrix_lr * (d / module.rank) ** (1.5 * args.noble_lr_gamma)
-                noble_adam_groups.append({"params": [module.W_up.weight], "lr": lr_up, "base_lr": lr_up})
-                noble_adam_groups.append({"params": [module.M.weight], "lr": lr_m, "base_lr": lr_m})
-        noble_elevated_ids = {id(g["params"][0]) for g in noble_adam_groups}
-        noble_elevated_names = {
-            name for name, p in block_named_params if id(p) in noble_elevated_ids
+        noble_adam_only_names = {
+            name for name, p in block_named_params
+            if p.ndim == 2 and "noble" in name and "W_up" not in name
         }
     matrix_params = [
         p
         for name, p in block_named_params
         if p.ndim == 2
         and not any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
-        and name not in noble_elevated_names
+        and name not in noble_adam_only_names
     ]
     scalar_params = [
         p
         for name, p in block_named_params
         if p.ndim < 2
         or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
+        or name in noble_adam_only_names
     ]
     if base_model.skip_weights.numel() > 0:
         scalar_params.append(base_model.skip_weights)
@@ -1470,14 +1466,6 @@ def main() -> None:
         optimizer_muon,
         optimizer_scalar,
     ]
-    if noble_adam_groups:
-        optimizer_noble = torch.optim.Adam(
-            noble_adam_groups,
-            betas=(args.beta1, args.beta2),
-            eps=args.adam_eps,
-            fused=True,
-        )
-        optimizers.append(optimizer_noble)
     if base_model.lm_head is not None:
         optimizer_head = torch.optim.Adam(
             [
