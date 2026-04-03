@@ -772,8 +772,9 @@ def block_attn_res(
     """Attend over completed block reps + current partial block (paper §3, Listing 1)."""
     V = torch.stack(blocks + [partial_block], dim=0)  # [N+1, B, T, D]
     K = norm(V)
-    logits = torch.einsum("d, n b t d -> n b t", proj.to(dtype=V.dtype), K)
-    return torch.einsum("n b t, n b t d -> b t d", logits.softmax(dim=0), V)
+    logits = torch.einsum("d, n b t d -> b t n", proj.to(dtype=V.dtype), K)
+    weights = logits.softmax(dim=-1)  # softmax over n (last dim) for Inductor compatibility
+    return torch.einsum("b t n, n b t d -> b t d", weights, V)
 
 
 class Block(nn.Module):
