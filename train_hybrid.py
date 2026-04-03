@@ -16,7 +16,6 @@ import subprocess
 import sys
 import time
 import uuid
-import zstandard as zstd
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +23,7 @@ import sentencepiece as spm
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+import zstandard as zstd
 from fla.layers import GatedDeltaNet as FLAGatedDeltaNet
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -87,6 +87,7 @@ class Hyperparameters:
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
+    attn_res_block_size = int(os.environ.get("ATTN_RES_BLOCK_SIZE", 4))  # 0 = disabled
 
     # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
@@ -765,6 +766,16 @@ class SwiGLUMLP(nn.Module):
         return self.proj(F.silu(self.fc_gate(x)) * self.fc(x))
 
 
+def block_attn_res(
+    blocks: list[Tensor], partial_block: Tensor, proj: Tensor, norm: RMSNorm
+) -> Tensor:
+    """Attend over completed block reps + current partial block (paper §3, Listing 1)."""
+    V = torch.stack(blocks + [partial_block], dim=0)  # [N+1, B, T, D]
+    K = norm(V)
+    logits = torch.einsum("d, n b t d -> n b t", proj.to(dtype=V.dtype), K)
+    return torch.einsum("n b t, n b t d -> b t d", logits.softmax(dim=0), V)
+
+
 class Block(nn.Module):
     def __init__(
         self,
@@ -777,9 +788,13 @@ class Block(nn.Module):
         use_deltanet: bool = False,
         use_short_conv: bool = True,
         use_swiglu: bool = False,
+        attn_res_block_size: int = 0,
+        layer_idx: int = 0,
     ):
         super().__init__()
         self.use_deltanet = use_deltanet
+        self.layer_idx = layer_idx
+        self.attn_res_block_size = attn_res_block_size
         self.attn_norm = RMSNorm()
         self.mlp_norm = RMSNorm()
         if use_deltanet:
@@ -803,6 +818,11 @@ class Block(nn.Module):
         self.resid_mix = nn.Parameter(
             torch.stack((torch.ones(dim), torch.zeros(dim))).float()
         )
+        if attn_res_block_size > 0:
+            self.attn_res_proj = nn.Parameter(torch.zeros(dim, dtype=torch.float32))
+            self.attn_res_norm = RMSNorm()
+            self.mlp_res_proj = nn.Parameter(torch.zeros(dim, dtype=torch.float32))
+            self.mlp_res_norm = RMSNorm()
 
     def forward(
         self, x: Tensor, x0: Tensor, q_delta_fn=None, v_delta_fn=None
@@ -822,6 +842,48 @@ class Block(nn.Module):
         )
         return x
 
+    def attn_res_forward(
+        self,
+        blocks: list[Tensor],
+        partial_block: Tensor,
+        q_delta_fn=None,
+        v_delta_fn=None,
+    ) -> tuple[list[Tensor], Tensor]:
+        """Block AttnRes forward (paper §3, Listing 1)."""
+        # Compute input h via inter-block attention before self-attention
+        h = block_attn_res(
+            blocks, partial_block, self.attn_res_proj, self.attn_res_norm
+        )
+
+        # Block boundary: save partial_block and start fresh for the new block
+        if (self.layer_idx + 1) % self.attn_res_block_size == 0:
+            blocks = blocks + [partial_block]
+            partial_block = None
+
+        # Self-attention
+        n = self.attn_norm(h)
+        if self.use_deltanet:
+            attn_out = self.attn(n)[0]
+        else:
+            qd = q_delta_fn(n) if q_delta_fn is not None else None
+            vd = v_delta_fn(n) if v_delta_fn is not None else None
+            attn_out = self.attn(n, qd, vd)
+        attn_out = self.attn_scale.to(dtype=h.dtype)[None, None, :] * attn_out
+        partial_block = (
+            (partial_block + attn_out) if partial_block is not None else attn_out
+        )
+
+        # Compute input h via inter-block attention before MLP
+        h = block_attn_res(blocks, partial_block, self.mlp_res_proj, self.mlp_res_norm)
+
+        # MLP
+        mlp_out = self.mlp_scale.to(dtype=h.dtype)[None, None, :] * self.mlp(
+            self.mlp_norm(h)
+        )
+        partial_block = partial_block + mlp_out
+
+        return blocks, partial_block
+
 
 class GPT(nn.Module):
     def __init__(
@@ -840,6 +902,7 @@ class GPT(nn.Module):
         logit_softcap: float,
         rope_base: float,
         qk_gain_init: float,
+        attn_res_block_size: int = 0,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -849,6 +912,7 @@ class GPT(nn.Module):
         self.tie_embeddings = tie_embeddings
         self.tied_embed_init_std = tied_embed_init_std
         self.logit_softcap = logit_softcap
+        self.attn_res_block_size = attn_res_block_size
         self.tok_emb = nn.Embedding(vocab_size, model_dim)
         self.num_encoder_layers = num_layers // 2
         self.num_decoder_layers = num_layers - self.num_encoder_layers
@@ -870,6 +934,8 @@ class GPT(nn.Module):
                     use_deltanet=(i % (gdn_ratio + 1) < gdn_ratio),
                     use_short_conv=use_short_conv,
                     use_swiglu=use_swiglu,
+                    attn_res_block_size=attn_res_block_size,
+                    layer_idx=i,
                 )
                 for i in range(num_layers)
             ]
@@ -895,23 +961,52 @@ class GPT(nn.Module):
         x0 = x
         skips: list[Tensor] = []
 
-        # First half stores skips; second half reuses them in reverse order.
-        for i in range(self.num_encoder_layers):
-            qd = lora.q_loras[i] if lora else None
-            vd = lora.v_loras[i] if lora else None
-            x = self.blocks[i](x, x0, qd, vd)
-            skips.append(x)
-        for i in range(self.num_decoder_layers):
-            bi = self.num_encoder_layers + i
-            if skips:
-                x = (
-                    x
-                    + self.skip_weights[i].to(dtype=x.dtype)[None, None, :]
-                    * skips.pop()
+        if self.attn_res_block_size > 0:
+            # Block AttnRes: replace fixed residuals with inter-block attention
+            blocks: list[Tensor] = [x]  # b_0 = normed embedding
+            partial_block: Tensor = x  # initial partial block = embedding
+
+            for i in range(self.num_encoder_layers):
+                qd = lora.q_loras[i] if lora else None
+                vd = lora.v_loras[i] if lora else None
+                blocks, partial_block = self.blocks[i].attn_res_forward(
+                    blocks, partial_block, qd, vd
                 )
-            qd = lora.q_loras[bi] if lora else None
-            vd = lora.v_loras[bi] if lora else None
-            x = self.blocks[bi](x, x0, qd, vd)
+                skips.append(partial_block)
+            for i in range(self.num_decoder_layers):
+                bi = self.num_encoder_layers + i
+                if skips:
+                    partial_block = (
+                        partial_block
+                        + self.skip_weights[i].to(dtype=partial_block.dtype)[
+                            None, None, :
+                        ]
+                        * skips.pop()
+                    )
+                qd = lora.q_loras[bi] if lora else None
+                vd = lora.v_loras[bi] if lora else None
+                blocks, partial_block = self.blocks[bi].attn_res_forward(
+                    blocks, partial_block, qd, vd
+                )
+            x = partial_block
+        else:
+            # First half stores skips; second half reuses them in reverse order.
+            for i in range(self.num_encoder_layers):
+                qd = lora.q_loras[i] if lora else None
+                vd = lora.v_loras[i] if lora else None
+                x = self.blocks[i](x, x0, qd, vd)
+                skips.append(x)
+            for i in range(self.num_decoder_layers):
+                bi = self.num_encoder_layers + i
+                if skips:
+                    x = (
+                        x
+                        + self.skip_weights[i].to(dtype=x.dtype)[None, None, :]
+                        * skips.pop()
+                    )
+                qd = lora.q_loras[bi] if lora else None
+                vd = lora.v_loras[bi] if lora else None
+                x = self.blocks[bi](x, x0, qd, vd)
         x = self.final_norm(x)
         if self.tie_embeddings:
             logits = F.linear(x, self.tok_emb.weight)
@@ -1351,6 +1446,7 @@ def main() -> None:
             logit_softcap=args.logit_softcap,
             rope_base=args.rope_base,
             qk_gain_init=args.qk_gain_init,
+            attn_res_block_size=args.attn_res_block_size,
         )
         .to(device)
         .bfloat16()
@@ -1745,7 +1841,8 @@ def main() -> None:
     with open("final_model.int8.ptz", "rb") as f:
         quant_blob_disk = f.read()
     quant_state = torch.load(
-        io.BytesIO(zstd.ZstdDecompressor().decompress(quant_blob_disk)), map_location="cpu"
+        io.BytesIO(zstd.ZstdDecompressor().decompress(quant_blob_disk)),
+        map_location="cpu",
     )
     base_model.load_state_dict(dequantize_state_dict_int8(quant_state), strict=True)
     torch.cuda.synchronize()
