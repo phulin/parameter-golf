@@ -844,6 +844,8 @@ class GPT(nn.Module):
         super().__init__()
         if logit_softcap <= 0.0:
             raise ValueError(f"logit_softcap must be positive, got {logit_softcap}")
+        if gdn_ratio < 0:
+            raise ValueError(f"gdn_ratio must be non-negative, got {gdn_ratio}")
         self.tie_embeddings = tie_embeddings
         self.tied_embed_init_std = tied_embed_init_std
         self.logit_softcap = logit_softcap
@@ -855,6 +857,7 @@ class GPT(nn.Module):
             torch.ones(self.num_skip_weights, model_dim, dtype=torch.float32)
         )
         # Within each group of (gdn_ratio + 1) layers, the first gdn_ratio are GDN and the last is attn.
+        # Setting gdn_ratio=0 disables GDN and uses attention in every block.
         self.blocks = nn.ModuleList(
             [
                 Block(
