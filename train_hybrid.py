@@ -767,13 +767,20 @@ class SwiGLUMLP(nn.Module):
 
 
 def block_attn_res(
-    blocks: list[Tensor], partial_block: Tensor, proj: Tensor, norm: RMSNorm
+    blocks_buf: Tensor, partial_block: Tensor, proj: Tensor, norm: RMSNorm
 ) -> Tensor:
-    """Attend over completed block reps + current partial block (paper §3, Listing 1)."""
-    V = torch.stack(blocks + [partial_block], dim=0)  # [N+1, B, T, D]
+    """Attend over completed block buffer + current partial block.
+
+    blocks_buf is always [max_n, B, T, D] — a fixed shape pre-allocated in GPT.forward.
+    Unwritten slots are zeros (contribute logit≈0, small softmax weight).  Keeping a
+    fixed shape avoids Python list ops and variable-length torch.stack, both of which
+    cause graph breaks / recompilations under torch.compile.
+    """
+    # torch.cat of two fixed-shape tensors → always [max_n+1, B, T, D]
+    V = torch.cat([blocks_buf, partial_block.unsqueeze(0)], dim=0)
     K = norm(V)
     logits = torch.einsum("d, n b t d -> b t n", proj.to(dtype=V.dtype), K)
-    weights = logits.softmax(dim=-1)  # softmax over n (last dim) for Inductor compatibility
+    weights = logits.softmax(dim=-1)  # softmax over n (last dim) for Inductor compat
     return torch.einsum("b t n, n b t d -> b t d", weights, V)
 
 
@@ -845,20 +852,31 @@ class Block(nn.Module):
 
     def attn_res_forward(
         self,
-        blocks: list[Tensor],
+        blocks_buf: Tensor,
         partial_block: Tensor,
+        n_written: int,
         q_delta_fn=None,
         v_delta_fn=None,
-    ) -> tuple[list[Tensor], Tensor]:
-        """Block AttnRes forward (paper §3, Listing 1)."""
-        # Compute input h via inter-block attention before self-attention
-        h = block_attn_res(
-            blocks, partial_block, self.attn_res_proj, self.attn_res_norm
-        )
+    ) -> tuple[Tensor, Tensor, int]:
+        """Block AttnRes forward (paper §3, Listing 1).
 
-        # Block boundary: save partial_block and start fresh for the new block
+        blocks_buf is a pre-allocated fixed-shape tensor [max_n, B, T, D].  Completed
+        blocks are written into it functionally (torch.cat, not in-place) so autograd
+        and torch.compile both see fixed shapes throughout.  n_written is a Python int
+        that tracks how many slots are filled; it is resolved as a compile-time constant
+        by torch.compile's tracer, making all slices static.
+        """
+        # Compute input h via inter-block attention before self-attention
+        h = block_attn_res(blocks_buf, partial_block, self.attn_res_proj, self.attn_res_norm)
+
+        # Block boundary: write partial_block into next slot, reset accumulator.
+        # All indices are Python ints → static in the compiled graph.
         if (self.layer_idx + 1) % self.attn_res_block_size == 0:
-            blocks = blocks + [partial_block]
+            blocks_buf = torch.cat(
+                [blocks_buf[:n_written], partial_block.unsqueeze(0), blocks_buf[n_written + 1 :]],
+                dim=0,
+            )  # shape stays [max_n, B, T, D]
+            n_written += 1
             partial_block = None
 
         # Self-attention
@@ -870,20 +888,16 @@ class Block(nn.Module):
             vd = v_delta_fn(n) if v_delta_fn is not None else None
             attn_out = self.attn(n, qd, vd)
         attn_out = self.attn_scale.to(dtype=h.dtype)[None, None, :] * attn_out
-        partial_block = (
-            (partial_block + attn_out) if partial_block is not None else attn_out
-        )
+        partial_block = (partial_block + attn_out) if partial_block is not None else attn_out
 
         # Compute input h via inter-block attention before MLP
-        h = block_attn_res(blocks, partial_block, self.mlp_res_proj, self.mlp_res_norm)
+        h = block_attn_res(blocks_buf, partial_block, self.mlp_res_proj, self.mlp_res_norm)
 
         # MLP
-        mlp_out = self.mlp_scale.to(dtype=h.dtype)[None, None, :] * self.mlp(
-            self.mlp_norm(h)
-        )
+        mlp_out = self.mlp_scale.to(dtype=h.dtype)[None, None, :] * self.mlp(self.mlp_norm(h))
         partial_block = partial_block + mlp_out
 
-        return blocks, partial_block
+        return blocks_buf, partial_block, n_written
 
 
 class GPT(nn.Module):
@@ -963,15 +977,22 @@ class GPT(nn.Module):
         skips: list[Tensor] = []
 
         if self.attn_res_block_size > 0:
-            # Block AttnRes: replace fixed residuals with inter-block attention
-            blocks: list[Tensor] = [x]  # b_0 = normed embedding
+            # Block AttnRes: replace fixed residuals with inter-block attention.
+            # Pre-allocate a fixed-shape buffer so block_attn_res always receives
+            # tensors of the same shape → no graph breaks, no recompilations.
+            num_layers = len(self.blocks)
+            max_n = 1 + num_layers // self.attn_res_block_size  # b_0 + max boundaries
+            B, T, D = x.shape
+            # Build blocks_buf: slot 0 = embedding, rest = zeros (contribute logit≈0)
+            blocks_buf = torch.cat([x.unsqueeze(0), x.new_zeros(max_n - 1, B, T, D)], dim=0)
             partial_block: Tensor = x  # initial partial block = embedding
+            n_written: int = 1  # slot 0 (embedding) is written
 
             for i in range(self.num_encoder_layers):
                 qd = lora.q_loras[i] if lora else None
                 vd = lora.v_loras[i] if lora else None
-                blocks, partial_block = self.blocks[i].attn_res_forward(
-                    blocks, partial_block, qd, vd
+                blocks_buf, partial_block, n_written = self.blocks[i].attn_res_forward(
+                    blocks_buf, partial_block, n_written, qd, vd
                 )
                 skips.append(partial_block)
             for i in range(self.num_decoder_layers):
@@ -979,15 +1000,13 @@ class GPT(nn.Module):
                 if skips:
                     partial_block = (
                         partial_block
-                        + self.skip_weights[i].to(dtype=partial_block.dtype)[
-                            None, None, :
-                        ]
+                        + self.skip_weights[i].to(dtype=partial_block.dtype)[None, None, :]
                         * skips.pop()
                     )
                 qd = lora.q_loras[bi] if lora else None
                 vd = lora.v_loras[bi] if lora else None
-                blocks, partial_block = self.blocks[bi].attn_res_forward(
-                    blocks, partial_block, qd, vd
+                blocks_buf, partial_block, n_written = self.blocks[bi].attn_res_forward(
+                    blocks_buf, partial_block, n_written, qd, vd
                 )
             x = partial_block
         else:
