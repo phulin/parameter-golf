@@ -64,7 +64,7 @@ class Hyperparameters:
 
     # Training length.
     iterations = int(os.environ.get("ITERATIONS", 20000))
-    warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 1200))
+    warmdown_frac = float(os.environ.get("WARMDOWN_FRAC", 0.1))
     lr_warmup_steps = int(os.environ.get("LR_WARMUP_STEPS", 5))
     lr_min_scale = float(os.environ.get("LR_MIN_SCALE", 0.1))
     warmup_steps = int(os.environ.get("WARMUP_STEPS", 20))
@@ -1504,9 +1504,11 @@ def main() -> None:
             progress = min(elapsed_ms / max(max_wallclock_ms, 1.0), 1.0)
         else:
             progress = min(step / max(args.iterations, 1), 1.0)
-        return args.lr_min_scale + (1.0 - args.lr_min_scale) * 0.5 * (
-            1.0 + math.cos(math.pi * progress)
-        )
+        warmdown_start = 1.0 - args.warmdown_frac
+        if progress >= warmdown_start:
+            decay = (1.0 - progress) / max(args.warmdown_frac, 1e-8)
+            return args.lr_min_scale + (1.0 - args.lr_min_scale) * decay
+        return 1.0
 
     # Warmup primes the compiled forward/backward/optimizer paths, then we restore the
     # initial weights/optimizer state so measured training starts from the true init.
