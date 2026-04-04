@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 
@@ -27,10 +28,21 @@ def run_one(var_name: str, value: str) -> dict[str, float]:
         [sys.executable, "train_hybrid.py"],
         env=env,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.PIPE,
         text=True,
     )
     assert proc.stdout is not None
+    assert proc.stderr is not None
+
+    stderr = proc.stderr
+
+    def drain_stderr():
+        for line in stderr:
+            print(line, end="", file=sys.stderr, flush=True)
+
+    stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+    stderr_thread.start()
+
     for line in proc.stdout:
         print(line, end="", flush=True)
         metrics = parse_metrics(line)
@@ -38,6 +50,8 @@ def run_one(var_name: str, value: str) -> dict[str, float]:
             if key in metrics:
                 if key not in best or metrics[key] < best[key]:
                     best[key] = metrics[key]
+
+    stderr_thread.join()
     proc.wait()
     if proc.returncode != 0:
         print(
